@@ -1,4 +1,8 @@
-import { getGameStorage } from "../../../storage/game-storage-cache.js";
+import {
+  DEFAULT_THEME_ID,
+  getMahjongThemeAppearance,
+  saveMahjongThemeAppearance,
+} from "../../../storage/theme-preferences.js";
 import {
   normalizeMahjongPortraitPool,
   resolveMahjongPortraitDefaults,
@@ -13,7 +17,6 @@ const ASSET_GROUPS = [
   "matchBgm",
   "riichiBgm",
 ];
-const DEFAULT_APPEARANCE_KEY = "playweft.mahjong.default-asset-appearance";
 
 const injectedConfig =
   typeof __MAHJONG_DEFAULT_ASSET_CONFIG__ !== "undefined"
@@ -142,7 +145,7 @@ export function getMahjongDefaultAssetCopyright() {
   ].filter(Boolean).join("\n");
 }
 
-export function configureMahjongDefaultAssetAppearance(nextAppearance) {
+export async function configureMahjongDefaultAssetAppearance(nextAppearance) {
   const config = MAHJONG_DEFAULT_ASSET_CONFIG;
   const currentAppearance = readAppearance(config);
   const appearance = {
@@ -152,21 +155,12 @@ export function configureMahjongDefaultAssetAppearance(nextAppearance) {
       self: nextAppearance?.portraits?.self ?? currentAppearance.portraits.self,
     },
   };
-  try {
-    getGameStorage("mahjong").setItem(DEFAULT_APPEARANCE_KEY, JSON.stringify(appearance));
-  } catch {
-    // The current tab still uses the returned in-memory configuration.
-  }
+  await saveMahjongThemeAppearance(DEFAULT_THEME_ID, appearance);
   return getMahjongDefaultAssetPack();
 }
 
 function readAppearance(config) {
-  let stored;
-  try {
-    stored = JSON.parse(getGameStorage("mahjong").getItem(DEFAULT_APPEARANCE_KEY) || "null");
-  } catch {
-    stored = null;
-  }
+  const stored = getMahjongThemeAppearance(DEFAULT_THEME_ID);
   const requested = stored && typeof stored === "object" ? stored : config.appearance;
   return {
     portraits: resolvePortraitAppearance(config, requested?.portraits),

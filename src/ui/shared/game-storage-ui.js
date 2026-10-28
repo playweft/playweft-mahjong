@@ -6,10 +6,10 @@ import { loadGameStorageCache } from "../../storage/game-storage-cache.js";
 /** Block startup on failed reads; retain the latest in-memory writes for retry. */
 export async function initializeGameStorage(
   bridge,
-  { gameId, keys, validate },
+  { gameId, keys, legacyKeys = keys, validate },
 ) {
   const backend = createGameStorage(bridge, {
-    legacyKeys: keys,
+    legacyKeys,
     migrationKey: `playweft:${gameId}:storage-migrated:v1`,
   });
   let overlay;

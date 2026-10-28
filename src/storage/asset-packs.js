@@ -1,5 +1,13 @@
 import { unzipSync } from "fflate";
 import {
+  DEFAULT_THEME_ID,
+  getMahjongThemeAppearance,
+  readMahjongThemePreferences,
+  removeMahjongThemePreferences,
+  saveMahjongThemeAppearance,
+  selectMahjongTheme,
+} from "./theme-preferences.js";
+import {
   configureMahjongDefaultAssetAppearance,
   getMahjongConfiguredAssetPacks,
   getMahjongDefaultAssetCopyright,
@@ -156,8 +164,7 @@ export async function applyMahjongMatchPortraits(savedPortraits, randomSeed) {
     randomSeed: String(randomSeed ?? ""),
   };
   if (assetPackStorageUnavailable) {
-    if (transientPack) applyResolvedAssets(transientPack);
-    else applyResolvedAssets(null);
+    applyTransientAssets();
     return getMahjongActivePortraits();
   }
   const active = await readActivePack();
@@ -399,10 +406,10 @@ export function getMahjongDefaultPack() {
 
 export { getMahjongConfiguredAssetPacks };
 
-export function configureMahjongDefaultPackAppearance(appearance) {
-  const pack = configureMahjongDefaultAssetAppearance(appearance);
+export async function configureMahjongDefaultPackAppearance(appearance) {
+  const saved = configureMahjongDefaultAssetAppearance(appearance);
   applyResolvedAssets(null);
-  return pack;
+  return saved;
 }
 
 export function getMahjongMatchMusicCopyright() {
@@ -453,12 +460,10 @@ export async function listMahjongAssetPacks() {
         const catalog = catalogForPack(pack);
         return [{
           ...pack,
+          active: readMahjongThemePreferences().selectedPackId === pack.id,
           catalog,
           portraitPool: pack.portraitPool ?? [],
-          appearance: normaliseAppearance(
-            pack.appearance,
-            catalog,
-          ),
+          appearance: packAppearance(pack, catalog),
           assetNames: records.map((asset) => asset.name),
         }];
       } catch {
@@ -510,18 +515,15 @@ export async function createMahjongAssetPack(archive, metadata = {}) {
   const transaction = database.transaction([PACKS, ASSETS], "readwrite");
   const packStore = transaction.objectStore(PACKS);
   const assetStore = transaction.objectStore(ASSETS);
-  const currentPacks = await requestPromise(packStore.getAll());
   const now = Date.now();
   const id =
     globalThis.crypto?.randomUUID?.() ??
     `pack-${now}-${Math.random().toString(36).slice(2)}`;
-  for (const pack of currentPacks) packStore.put({ ...pack, active: false });
   packStore.put({
     id,
     name,
-    active: true,
     catalog: manifest.catalog,
-    appearance: manifest.appearance,
+    defaults: manifest.appearance,
     portraitPool: manifest.portraitPool,
     defaultNames: portraitNames(manifest.catalog, manifest.appearance),
     sourceUrl: typeof metadata.sourceUrl === "string" ? metadata.sourceUrl : "",
@@ -538,7 +540,7 @@ export async function createMahjongAssetPack(archive, metadata = {}) {
     });
   }
   await transactionPromise(transaction);
-  await refreshActiveAssets();
+  await applyThemePreference(saveMahjongThemeAppearance(id, manifest.appearance, { select: true }));
   return listMahjongAssetPacks();
 }
 
@@ -572,106 +574,71 @@ export async function unpackMahjongAssetPack(archive) {
 export async function activateMahjongAssetPack(id) {
   if (assetPackStorageUnavailable) {
     if (!transientPack || transientPack.id !== id) throw new Error("找不到该主题包");
-    transientPack = { ...transientPack, active: true };
-    applyTransientAssets();
+    await applyThemePreference(selectMahjongTheme(id));
     return listTransientAssetPacks();
   }
   const database = await openDatabase();
-  const transaction = database.transaction(PACKS, "readwrite");
-  const store = transaction.objectStore(PACKS);
-  const packs = await requestPromise(store.getAll());
-  if (!packs.some((pack) => pack.id === id)) throw new Error("找不到该素材包");
-  for (const pack of packs) store.put({ ...pack, active: pack.id === id });
-  await transactionPromise(transaction);
-  await refreshActiveAssets();
+  const transaction = database.transaction(PACKS, "readonly");
+  const pack = await requestPromise(transaction.objectStore(PACKS).get(id));
+  if (!pack) throw new Error("找不到该素材包");
+  catalogForPack(pack);
+  await applyThemePreference(selectMahjongTheme(id));
   return listMahjongAssetPacks();
 }
 
-/** Persist the active pack's local visual choices without changing room identity. */
+/** Persist appearance preferences through the same backend as other settings. */
 export async function configureMahjongAssetPackAppearance(id, appearance) {
+  if (readMahjongThemePreferences().selectedPackId !== id)
+    throw new Error("请先启用这个主题包");
   if (assetPackStorageUnavailable) {
     if (!transientPack || transientPack.id !== id) throw new Error("请先启用这个主题包");
-    const catalog = transientPack.catalog;
-    const nextAppearance = normaliseAppearance(
-      appearance,
-      catalog,
-    );
-    transientPack = {
-      ...transientPack,
-      appearance: nextAppearance,
-      assets: resolveAppearanceAssets(
-        transientPack.stored,
-        nextAppearance,
-        catalog,
-      ),
-    };
-    applyTransientAssets();
+    await applyThemePreference(saveMahjongThemeAppearance(id, normaliseAppearance(appearance, transientPack.catalog)));
     return listTransientAssetPacks();
   }
   const database = await openDatabase();
-  const transaction = database.transaction(PACKS, "readwrite");
-  const packStore = transaction.objectStore(PACKS);
-  const packs = await requestPromise(packStore.getAll());
-  const pack = packs.find(
-    (candidate) => candidate.id === id && candidate.active,
-  );
+  const transaction = database.transaction(PACKS, "readonly");
+  const pack = await requestPromise(transaction.objectStore(PACKS).get(id));
   if (!pack) throw new Error("请先启用这个素材包");
   const catalog = catalogForPack(pack);
-  packStore.put({
-    ...pack,
-    catalog,
-    appearance: normaliseAppearance(appearance, catalog),
-    updatedAt: Date.now(),
-  });
-  await transactionPromise(transaction);
-  await refreshActiveAssets();
+  await applyThemePreference(saveMahjongThemeAppearance(id, normaliseAppearance(appearance, catalog)));
   return listMahjongAssetPacks();
 }
 
 /** Stop using uploaded assets while keeping every imported pack available. */
 export async function deactivateMahjongAssetPacks() {
-  if (assetPackStorageUnavailable) {
-    if (transientPack) transientPack = { ...transientPack, active: false };
-    applyResolvedAssets(null);
-    return listTransientAssetPacks();
-  }
-  const database = await openDatabase();
-  const transaction = database.transaction(PACKS, "readwrite");
-  const store = transaction.objectStore(PACKS);
-  const packs = await requestPromise(store.getAll());
-  for (const pack of packs) store.put({ ...pack, active: false });
-  await transactionPromise(transaction);
-  await refreshActiveAssets();
+  await applyThemePreference(selectMahjongTheme(DEFAULT_THEME_ID));
   return listMahjongAssetPacks();
 }
 
 export async function deleteMahjongAssetPack(id) {
   if (assetPackStorageUnavailable) {
     if (!transientPack || transientPack.id !== id) throw new Error("找不到该主题包");
+    await applyThemePreference(removeMahjongThemePreferences(id));
     transientPack = null;
-    applyResolvedAssets(null);
+    applyTransientAssets();
     return listTransientAssetPacks();
   }
   const database = await openDatabase();
+  const existing = await requestPromise(database.transaction(PACKS, "readonly").objectStore(PACKS).get(id));
+  if (!existing) throw new Error("找不到该素材包");
+  await applyThemePreference(removeMahjongThemePreferences(id));
   const transaction = database.transaction([PACKS, ASSETS], "readwrite");
   const packStore = transaction.objectStore(PACKS);
   const assetStore = transaction.objectStore(ASSETS);
-  const packs = await requestPromise(packStore.getAll());
-  const removed = packs.find((pack) => pack.id === id);
-  if (!removed) throw new Error("找不到该素材包");
-  const remaining = packs.filter((pack) => pack.id !== id);
-  const nextActive = removed.active
-    ? undefined
-    : packs.find((pack) => pack.active)?.id;
   packStore.delete(id);
-  for (const pack of remaining)
-    packStore.put({ ...pack, active: pack.id === nextActive });
   const assets = await requestPromise(assetStore.getAll());
   for (const asset of assets)
     if (asset.packId === id) assetStore.delete([asset.packId, asset.slot]);
   await transactionPromise(transaction);
   await refreshActiveAssets();
   return listMahjongAssetPacks();
+}
+
+async function applyThemePreference(saved) {
+  // Render the cache's latest choice while it commits. On failure the storage
+  // overlay blocks interaction and retries that same snapshot; the displayed
+  // theme therefore stays consistent when retry succeeds.
+  await Promise.all([saved, refreshActiveAssets()]);
 }
 
 async function refreshActiveAssets() {
@@ -683,27 +650,21 @@ async function refreshActiveAssets() {
   applyResolvedAssets(active);
 }
 
-function installTransientAssetPack(manifest, stored, metadata) {
+async function installTransientAssetPack(manifest, stored, metadata) {
   const id = `transient-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   transientPack = {
     id,
     name: manifest.name,
-    active: true,
     catalog: manifest.catalog,
-    appearance: manifest.appearance,
+    defaults: manifest.appearance,
     portraitPool: manifest.portraitPool,
     defaultNames: portraitNames(manifest.catalog, manifest.appearance),
     sourceUrl: typeof metadata.sourceUrl === "string" ? metadata.sourceUrl : "",
     stored,
-    assets: resolveAppearanceAssets(
-      stored,
-      manifest.appearance,
-      manifest.catalog,
-    ),
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
-  applyTransientAssets();
+  await applyThemePreference(saveMahjongThemeAppearance(id, manifest.appearance, { select: true }));
   return listTransientAssetPacks();
 }
 
@@ -712,12 +673,24 @@ function listTransientAssetPacks() {
   const { stored, ...pack } = transientPack;
   return [{
     ...pack,
+    active: readMahjongThemePreferences().selectedPackId === pack.id,
+    appearance: packAppearance(pack, pack.catalog),
     assetNames: [...stored.values()].map((asset) => asset.name),
   }];
 }
 
 function applyTransientAssets() {
-  applyResolvedAssets(transientPack?.active ? transientPack : null);
+  if (!transientPack || readMahjongThemePreferences().selectedPackId !== transientPack.id) {
+    applyResolvedAssets(null);
+    return;
+  }
+  const appearance = packAppearance(transientPack, transientPack.catalog);
+  applyResolvedAssets({
+    ...transientPack,
+    appearance,
+    defaultNames: portraitNames(transientPack.catalog, appearance),
+    assets: resolveAppearanceAssets(transientPack.stored, appearance, transientPack.catalog),
+  });
 }
 
 function applyResolvedAssets(active) {
@@ -790,14 +763,12 @@ async function readActivePack() {
     requestPromise(transaction.objectStore(PACKS).getAll()),
     requestPromise(transaction.objectStore(ASSETS).getAll()),
   ]);
-  for (const pack of packs.filter((candidate) => candidate.active)) {
+  const { selectedPackId } = readMahjongThemePreferences();
+  for (const pack of packs.filter((candidate) => candidate.id === selectedPackId)) {
     try {
       const records = assets.filter((asset) => asset.packId === pack.id);
       const catalog = catalogForPack(pack);
-      const appearance = normaliseAppearance(
-        pack.appearance,
-        catalog,
-      );
+      const appearance = packAppearance(pack, catalog);
       const stored = new Map(records.map((asset) => [asset.slot, asset]));
       return {
         ...pack,
@@ -813,6 +784,10 @@ async function readActivePack() {
     }
   }
   return null;
+}
+
+function packAppearance(pack, catalog) {
+  return normaliseAppearance(getMahjongThemeAppearance(pack.id) ?? pack.defaults, catalog);
 }
 
 function applyActiveAssets(

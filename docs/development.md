@@ -89,6 +89,19 @@ before using them.
 Mahjong's separate replay archive and imported asset-pack databases are outside
 this localStorage migration.
 
+Theme selection and per-theme appearance preferences share the acknowledged
+platform/standalone storage under `playweft.mahjong.theme-preferences.v1`.
+This record contains the selected pack ID and appearance choices keyed by pack
+ID, including the built-in `__default__` theme. Old theme settings are not read
+or migrated. The new key is excluded from legacy localStorage imports.
+
+Imported theme files, catalogs, and manifest defaults remain in the local
+`playweft-mahjong-asset-packs-v2` IndexedDB. Switching themes or changing an
+appearance does not rewrite that database. If the selected pack is unavailable
+locally, the game displays the built-in theme and preserves the preference.
+Deleting a theme removes its files and preferences; deleting the selected theme
+also selects the built-in default. Theme files are not platform or cloud saves.
+
 ## Mahjong career progress
 
 The lobby has a `立志戦` submenu with three independent save slots and a

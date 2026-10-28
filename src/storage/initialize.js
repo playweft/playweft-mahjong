@@ -5,6 +5,7 @@ import {
 } from "./solo-save.js";
 
 import { CAREER_KEYS, parseCareer } from "../game/career/career.js";
+import { MAHJONG_THEME_PREFERENCES_KEY, parseMahjongThemePreferences } from "./theme-preferences.js";
 
 export const MAHJONG_STORAGE_KEYS = [
   ...CAREER_KEYS,
@@ -19,7 +20,7 @@ export const MAHJONG_STORAGE_KEYS = [
   "playweft.mahjong.voice-volume",
   "playweft.mahjong.avatar-source-preference",
   "playweft.mahjong.default-character.v1",
-  "playweft.mahjong.default-asset-appearance",
+  MAHJONG_THEME_PREFERENCES_KEY,
   "playweft.mahjong.offline-cache-mode",
   "playweft.mahjong.offline-cache-policy",
   "playweft.mahjong.offline-cache-version",
@@ -29,7 +30,9 @@ export function initializeMahjongStorage(bridge) {
   return initializeGameStorage(bridge, {
     gameId: "mahjong",
     keys: MAHJONG_STORAGE_KEYS,
+    legacyKeys: MAHJONG_STORAGE_KEYS.filter((key) => key !== MAHJONG_THEME_PREFERENCES_KEY),
     validate(key, raw) {
+      if (key === MAHJONG_THEME_PREFERENCES_KEY) { parseMahjongThemePreferences(raw); return; }
       if (CAREER_KEYS.includes(key)) { parseCareer(raw); return; }
       if (key !== MAHJONG_SOLO_SAVE_KEY || raw === null) return;
       if (!readMahjongSoloSave({ getItem: () => raw }))

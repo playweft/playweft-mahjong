@@ -190,7 +190,7 @@ export function createMahjongThemeController({
     }
     try {
       if (activePack.isDefault) {
-        configureMahjongDefaultPackAppearance(appearance);
+        await configureMahjongDefaultPackAppearance(appearance);
       } else {
         visualPacks = await configureMahjongAssetPackAppearance(
           activePack.id,
@@ -205,6 +205,7 @@ export function createMahjongThemeController({
 
   const onAssetPackChanged = () => {
     void (async () => {
+      await refreshThemePacks();
       await applyVisualPack();
       syncDefaultMusicCopyright();
       await applyPackAvatars();
