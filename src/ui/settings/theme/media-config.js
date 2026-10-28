@@ -1,0 +1,1 @@
+export const DEFAULT_MATCH_MUSIC_VOLUME = 0.32;
