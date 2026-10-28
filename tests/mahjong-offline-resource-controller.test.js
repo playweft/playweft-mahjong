@@ -1,3 +1,4 @@
+import { mountUi } from "./helpers/ui.jsx";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -8,34 +9,13 @@ import { loadGameStorageCache } from "../src/storage/game-storage-cache.js";
 import { gameOfflineCacheName, gameOfflineSettingsKeys, readGameOfflineSettings } from "../src/offline/game-offline-cache.js";
 import { createMahjongOfflineResourceController } from "../src/offline/offline-resource-controller.js";
 
-function fakeButton() {
-  const classes = new Set();
-  return {
-    classes,
-    classList: {
-      toggle: (name, active) => active ? classes.add(name) : classes.delete(name),
-      contains: (name) => classes.has(name),
-    },
-    attributes: new Map(),
-    setAttribute(name, value) {
-      this.attributes.set(name, value);
-    },
-  };
-}
-
-test("mahjong offline resource button scopes lucide rendering to itself", () => {
-  const button = fakeButton();
-  const calls = [];
-  createMahjongOfflineResourceController({
-    button,
-    createIconsImpl: (options) => calls.push(options),
-  });
-
-  assert.match(button.innerHTML, /离线资源包/);
-  assert.match(button.innerHTML, /data-lucide="download"/);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].root, button);
-  assert.deepEqual(Object.keys(calls[0].icons), ["Download", "LoaderCircle", "Trash2"]);
+test("offline resource icons are rendered by the component without replacing the control", async (t) => {
+  const f = await fixture(t);
+  const button = f.button;
+  assert.match(button.textContent, /离线资源包/);
+  assert.ok(button.querySelector('svg[data-lucide="download"]'));
+  f.controller.render();
+  assert.equal(button, button.ownerDocument.querySelector("#mahjong-offline-action-button"));
 });
 
 async function until(check) {
@@ -49,8 +29,8 @@ async function until(check) {
 async function fixture(t) {
   const { caches, setGlobal } = installOfflineCache(t);
   const browser = new Window({ url: "https://game.example/mahjong/" });
-  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
-  browser.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs, ""));
+
+  mountUi(browser.document);
   t.after(() => browser.happyDOM.abort());
   setGlobal("document", browser.document);
   const entries = new Map([["playweft.mahjong.offline-cache-policy", "local-first"]]);
@@ -124,6 +104,7 @@ test("failed and cancelled downloads never expose the resource policy", async (t
   let started = false;
   f.setGlobal("fetch", (request) => new Promise((resolve, reject) => {
     started = true;
+    if (request.signal.aborted) { reject(new DOMException("cancelled", "AbortError")); return; }
     request.signal.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")));
   }));
   const downloading = f.controller.download();

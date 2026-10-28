@@ -1,7 +1,8 @@
 # Mahjong development notes
 
 The repository is a standalone Vite project. `index.html`, `help.html`, and
-`playweft.json` live at the root; all browser source lives under `src/`.
+`playweft.json` live at the root; all browser source lives under `src/`. `index.html` is a small mount shell;
+`src/main.jsx` mounts the Preact `src/app/App.jsx` component tree.
 No sibling checkout is needed to install, build, or test it.
 
 ## Source organization
@@ -9,7 +10,7 @@ No sibling checkout is needed to install, build, or test it.
 - `src/game/`: Lua rules, JavaScript rule helpers, career calculation, save-data
   validation, and replay progression. These modules do not import UI, rendering,
   platform, runtime, or storage adapters.
-- `src/ui/`: lobby, table controls, result pages, replay controls, settings,
+- `src/ui/`: Preact/JSX components for the lobby, table controls, result pages, replay controls, settings,
   and shared DOM components. Feature styles live beside the corresponding UI;
   `src/styles/` contains global styles and font declarations.
 - `src/render/`: Three.js scenes, tile factories, animation, result-hand
@@ -29,6 +30,27 @@ For example, `src/game/career/career.js` settles a season;
 `src/storage/career-store.js` persists it, and `src/ui/result/` presents it.
 The practice-save model is in `src/game/replay/solo-save.js`, while
 `src/storage/solo-save.js` owns reads and writes.
+
+## UI ownership
+
+Preact owns the interface markup and display state. Coordinators publish view
+models through the narrow `ViewComponent.update()` interface, which commits
+synchronously so a legal-action update is visible before the next input. Rules,
+AI, replay progression, and save formats remain independent of Preact.
+Components own claim-picker state, settings fields and tabs, career-slot rows,
+result pages, replay lists, theme selections, and offline-resource controls.
+Native DOM access is reserved for input adapters, focus management, transitions,
+and integration with the existing Three.js and help-iframe surfaces.
+
+The table canvas uses a stable host in `TableScene`; ordinary UI updates do not
+replace it or recreate the renderer. The match runtime retains responsibility
+for renderer startup and destruction. Dynamic theme lists render into empty
+component host elements and unmount when the theme controller is destroyed.
+
+Node tests run with the `tsx` loader to exercise the same JSX components used by
+Vite. UI fixtures mount `App` instead of duplicating its markup. Font tooling
+renders the component tree to HTML with `preact-render-to-string`, so brush
+coverage continues to follow the actual interface.
 
 ## Game package and local execution
 
@@ -146,7 +168,7 @@ action buttons/callouts, result continuation/waiting labels, traditional yaku
 names, draw reasons, and career result titles/buttons/grades. Ordinary settings text, career save summaries, player
 names, and score-sheet numbers use their existing UI/Kalam fonts.
 
-`node build/fonts/mahjong-brush-text.js --check` verifies the generated glyph list
+`npm run fonts:check` verifies the generated glyph list
 against the current lobby labels, career-result labels and known dynamic brush labels. Rebuild using
 `bash build/fonts/build-bakudai-subset.sh /path/to/Bakudai-Regular.woff2`.
 The script regenerates the text list, checks source coverage, builds WOFF2 and

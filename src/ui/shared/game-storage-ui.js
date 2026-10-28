@@ -1,3 +1,5 @@
+import { h, render } from "preact";
+import { StorageFailure } from "./StorageFailure.jsx";
 import { createGameStorage } from "../../storage/game-storage.js";
 import { loadGameStorageCache } from "../../storage/game-storage-cache.js";
 
@@ -15,6 +17,7 @@ export async function initializeGameStorage(
   let blockedElements = [];
   function close() {
     if (!overlay) return;
+    render(null, overlay);
     overlay.remove();
     overlay = undefined;
     for (const node of blockedElements) node.inert = false;
@@ -32,39 +35,8 @@ export async function initializeGameStorage(
       overlay.className = "game-storage-overlay";
       document.body.append(overlay);
     }
-    const card = document.createElement("div");
-    card.className = "game-storage-error";
-    card.setAttribute("role", "alertdialog");
-    card.setAttribute("aria-modal", "true");
-    card.setAttribute("aria-labelledby", "game-storage-title");
-    card.setAttribute("aria-describedby", "game-storage-reason");
-    const title = document.createElement("h2");
-    title.id = "game-storage-title";
-    title.textContent = saving ? "存档保存失败" : "存档读取失败";
-    const reason = document.createElement("p");
-    reason.id = "game-storage-reason";
-    reason.textContent = `${error?.code ? `[${error.code}]\n` : ""}${error?.message || String(error)}\n${saving ? "当前进度仍保留在本页，请重试保存。" : "旧存档已保留，请重试读取。"}`;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = saving ? "重试保存" : "重试读取";
-    button.onclick = async () => {
-      button.disabled = true;
-      try {
-        await retry();
-      } finally {
-        button.disabled = false;
-      }
-    };
-    card.onkeydown = (event) => {
-      if (event.key === "Tab") {
-        event.preventDefault();
-        button.focus();
-      }
-      event.stopPropagation();
-    };
-    card.append(title, reason, button);
-    overlay.replaceChildren(card);
-    button.focus();
+    render(h(StorageFailure, { error, retry, saving }), overlay);
+    overlay.querySelector("button").focus();
   }
   while (true) {
     try {

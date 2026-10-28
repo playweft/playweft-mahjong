@@ -1,3 +1,4 @@
+import { appMarkup } from "../ui/markup.jsx";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CLAIM_LABELS } from "../../src/game/rules/constants.js";
@@ -7,12 +8,12 @@ import { CAREER_RESULT_LABELS } from "../../src/ui/result/career-result-controll
 
 const root = new URL("../../", import.meta.url);
 export function mahjongBrushTextGroups() {
-  const html = readFileSync(new URL("index.html", root), "utf8");
+  const html = appMarkup();
   return {
     lobby: [...html.matchAll(/<span class="setup-route-name[^\"]*"[^>]*>([^<]+)<\/span>/g)].map((match) => match[1]).join(""),
     roomEntry: Object.values(ROOM_ENTRY_LABELS).join(""),
     careerResult: "ABCDE" + Object.values(CAREER_RESULT_LABELS).map(({ title, action }) => title + action).join("") +
-      [...html.matchAll(/data-career-brush>([^<]+)</g)].map((match) => match[1]).join(""),
+      [...html.matchAll(/data-career-brush(?:="")?>([^<]+)</g)].map((match) => match[1]).join(""),
     roundsAndWinds: "+0123456789四人東南西北一二三四局",
     actions: `跳过流局立直自摸${Object.values(CLAIM_LABELS).join("")}`,
     results: "继续等待中",

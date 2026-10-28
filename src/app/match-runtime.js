@@ -1,26 +1,5 @@
+import { viewFor } from "../ui/shared/component.js";
 // Loaded and initialized in the background after the lobby is visible.
-import {
-  BookOpen,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsUpDown,
-  Cog,
-  Download,
-  Eye,
-  EyeOff,
-  LoaderCircle,
-  Pause,
-  Play,
-  SignalHigh,
-  SignalLow,
-  SignalMedium,
-  SkipBack,
-  SkipForward,
-  Trash2,
-  UsersRound,
-  X,
-  createIcons,
-} from "lucide";
 import {
   AI_DELAY_MS,
   AUTO_DECISION_DELAY_MS,
@@ -95,29 +74,6 @@ export function createMahjongMatchRuntime({
   initialState,
   setBridgeHandlers,
 } = {}) {
-  const lucideIcons = {
-    BookOpen,
-    ChevronLeft,
-    ChevronRight,
-    ChevronsUpDown,
-    Cog,
-    Download,
-    Eye,
-    EyeOff,
-    LoaderCircle,
-    Pause,
-    Play,
-    SignalHigh,
-    SignalLow,
-    SignalMedium,
-    SkipBack,
-    SkipForward,
-    Trash2,
-    UsersRound,
-    X,
-  };
-  createIcons({ icons: lucideIcons, root: document });
-
   const effectRunner = createMahjongEffectRunner();
   const isStandalone = window.parent === window;
   let roomPlayerProfiles;
@@ -255,7 +211,6 @@ export function createMahjongMatchRuntime({
     button: document.querySelector("#mahjong-offline-action-button"),
     feedback: document.querySelector("#mahjong-offline-feedback"),
     policyRow: document.querySelector("#mahjong-offline-policy-row"),
-    createIconsImpl: createIcons,
     confirm: (message) =>
       isStandalone ? window.confirm(message) : playweftClient?.confirm(message),
     extraUrls: [
@@ -330,7 +285,7 @@ export function createMahjongMatchRuntime({
     },
   });
   const autoActionController = createMahjongAutoActionController({
-    elements,
+    renderControls: (actions) => viewFor(document.querySelector("#auto-action-controls")).update({ actions }),
     settingsDialog,
     getMode: matchCoordinator.getMode,
     getSession: () => session,

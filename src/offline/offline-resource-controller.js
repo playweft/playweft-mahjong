@@ -8,18 +8,17 @@ import {
   readGameOfflineSettings,
   writeGameOfflineSettings,
 } from "./game-offline-cache.js";
-import { Download, LoaderCircle, Trash2, createIcons } from "lucide";
+import { viewFor } from "../ui/shared/component.js";
 
 export function createMahjongOfflineResourceController({
   button,
   feedback,
   policyRow,
-  icons = { Download, LoaderCircle, Trash2 },
-  createIconsImpl = createIcons,
   confirm,
   extraUrls = [],
   gameId = "mahjong",
 } = {}) {
+  const view = viewFor(button.closest("#offline-resources"));
   const buildVersion = readBuildContentVersion();
   let state = "idle";
   let checking = true;
@@ -28,34 +27,13 @@ export function createMahjongOfflineResourceController({
 
   function render({ animate = true } = {}) {
     if (!button) return;
-    const downloading = state === "downloading";
-    const complete = state === "complete";
-    const icon = downloading
-      ? "loader-circle"
-      : complete
-        ? "trash-2"
-        : "download";
-    const label = downloading ? "下载中" : complete ? "删除" : "下载";
-    const action = downloading
-      ? "取消下载"
-      : complete
-        ? "删除离线资源"
-        : "下载离线资源";
-    if (policyRow) {
-      if (!complete && policyRow.contains(policyRow.ownerDocument.activeElement))
-        button.focus({ preventScroll: true });
-      policyRow.inert = !complete;
-      policyRow.setAttribute("aria-hidden", String(!complete));
-      policyRow.classList.toggle("is-animated", animate);
-      policyRow.classList.toggle("is-expanded", complete);
-      policyRow.querySelector("select").disabled = !complete;
-    }
-    button.disabled = checking;
-    button.classList.toggle("is-downloading", downloading);
-    button.setAttribute("aria-label", action);
-    button.setAttribute("title", action);
-    button.innerHTML = `<span class="settings-general-list-label">离线资源包</span><span class="settings-list-trailing settings-offline-action-content"><span>${label}</span><i data-lucide="${icon}" aria-hidden="true"></i></span>`;
-    createIconsImpl?.({ icons, root: button });
+    if (
+      policyRow &&
+      state !== "complete" &&
+      policyRow.contains(policyRow.ownerDocument.activeElement)
+    )
+      button.focus({ preventScroll: true });
+    view.update({ status: state, checking, animate });
   }
 
   async function download() {
@@ -64,7 +42,7 @@ export function createMahjongOfflineResourceController({
     abortController = new AbortController();
     state = "downloading";
     render();
-    if (feedback) feedback.textContent = "正在下载麻将离线资源…";
+    if (feedback) view.update({ feedback: "正在下载麻将离线资源…" });
     try {
       const results = await cacheGameOfflineResources(
         gameId,
@@ -76,11 +54,15 @@ export function createMahjongOfflineResourceController({
       if (failed) {
         state = "idle";
         if (feedback)
-          feedback.textContent = `已缓存 ${results.length - failed} 项，${failed} 项暂时无法下载。`;
+          view.update({
+            feedback: `已缓存 ${results.length - failed} 项，${failed} 项暂时无法下载。`,
+          });
       } else {
         state = "complete";
         if (feedback)
-          feedback.textContent = `已缓存 ${results.length} 项麻将离线资源。`;
+          view.update({
+            feedback: `已缓存 ${results.length} 项麻将离线资源。`,
+          });
         const settings = writeGameOfflineSettings(gameId, {
           ...readGameOfflineSettings(gameId),
           mode: "download",
@@ -93,9 +75,9 @@ export function createMahjongOfflineResourceController({
       state = "idle";
       if (error?.name === "AbortError") {
         await clearGameOfflineCache(gameId);
-        if (feedback) feedback.textContent = "已取消下载。";
+        if (feedback) view.update({ feedback: "已取消下载。" });
       } else if (feedback) {
-        feedback.textContent = "下载失败，请稍后重试。";
+        view.update({ feedback: "下载失败，请稍后重试。" });
       }
     } finally {
       if (currentOperation === operationId) {
@@ -117,7 +99,7 @@ export function createMahjongOfflineResourceController({
       mode: "none",
     });
     await notifyGameOfflineSettings(gameId, settings);
-    if (feedback) feedback.textContent = "已删除麻将离线缓存。";
+    if (feedback) view.update({ feedback: "已删除麻将离线缓存。" });
     render();
   }
 
@@ -136,12 +118,18 @@ export function createMahjongOfflineResourceController({
     if (abortController) return;
     const currentOperation = operationId;
     const settings = readGameOfflineSettings(gameId);
-    const available = await hasGameOfflineResources(gameId, { settings, buildVersion });
+    const available = await hasGameOfflineResources(gameId, {
+      settings,
+      buildVersion,
+    });
     if (currentOperation !== operationId) return;
     state = available ? "complete" : "idle";
     checking = false;
     if (!available && settings.mode === "download") {
-      const next = writeGameOfflineSettings(gameId, { ...settings, mode: "none" });
+      const next = writeGameOfflineSettings(gameId, {
+        ...settings,
+        mode: "none",
+      });
       await notifyGameOfflineSettings(gameId, next);
     }
     render({ animate: false });

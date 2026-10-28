@@ -14,7 +14,7 @@ const defaultAutoActions = () => ({
  * preference state, the riichi convenience rule, persistence, and controls.
  */
 export function createMahjongAutoActionController({
-  elements,
+  renderControls = () => {},
   settingsDialog,
   getMode,
   getSession,
@@ -46,14 +46,7 @@ export function createMahjongAutoActionController({
   }
 
   function syncControls() {
-    for (const [button, enabled, label] of [
-      [elements.autoWin, autoActions.autoWin, "自动胡牌"],
-      [elements.passClaims, autoActions.passClaims, "放弃鸣牌"],
-      [elements.autoTsumogiri, autoActions.autoTsumogiri, "自动摸切"],
-    ]) {
-      button.setAttribute("aria-pressed", String(enabled));
-      button.title = `${label}（${enabled ? "开启" : "关闭"}）`;
-    }
+    renderControls({ ...autoActions });
   }
 
   function schedule() {

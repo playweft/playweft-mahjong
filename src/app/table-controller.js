@@ -737,18 +737,14 @@ export function createMahjongTableController({
       return;
     }
     matchSummaryVisible = true;
-    elements.result.classList.add("is-match-summary");
-    elements.matchSummarySetup.hidden = getMode?.() === "room";
-    elements.matchSummary.hidden = false;
+    domView.setMatchSummary({ visible: true, room: getMode?.() === "room" });
     resultHandRenderer.hide();
     renderMatchSummary();
   }
 
   function hideMatchSummary() {
     matchSummaryVisible = false;
-    elements.result.classList.remove("is-match-summary");
-    elements.matchSummarySetup.hidden = false;
-    elements.matchSummary.hidden = true;
+    domView.setMatchSummary({ visible: false, room: false });
   }
 
   function renderMatchSummary() {
@@ -759,21 +755,7 @@ export function createMahjongTableController({
     });
     const winner = rows[0];
     if (!winner) return;
-    elements.matchSummaryRows.replaceChildren(
-      ...rows.map((entry) => {
-        const row = document.createElement("tr");
-        for (const value of [
-          `${entry.rank}位`,
-          entry.name,
-          String(entry.score),
-        ]) {
-          const cell = document.createElement("td");
-          cell.textContent = value;
-          row.append(cell);
-        }
-        return row;
-      }),
-    );
+    domView.setMatchSummary({ rows });
     renderMatchSummaryPortrait(winner.seat);
   }
 
@@ -784,35 +766,8 @@ export function createMahjongTableController({
       "[data-player-avatar]",
     );
     const source = stationImage?.dataset.source || "";
-    const crop = elements.matchSummaryPhotoCrop;
-    const image = elements.matchSummaryPhotoImage;
-    crop.style.setProperty(
-      "--match-summary-portrait-position",
-      MATCH_SUMMARY_PORTRAIT_POSITIONS[index] || "0% 0%",
-    );
-    if (!source) {
-      crop.classList.remove("is-custom");
-      image.hidden = true;
-      image.removeAttribute("src");
-      delete image.dataset.source;
-      return;
-    }
-    if (image.dataset.source === source && !image.hidden) return;
-    crop.classList.remove("is-custom");
-    image.hidden = true;
-    image.dataset.source = source;
-    image.onload = () => {
-      if (image.dataset.source !== source) return;
-      crop.classList.add("is-custom");
-      image.hidden = false;
-    };
-    image.onerror = () => {
-      if (image.dataset.source !== source) return;
-      crop.classList.remove("is-custom");
-      image.hidden = true;
-      image.removeAttribute("src");
-    };
-    image.src = source;
+    domView.setMatchSummary({ portraitSource: source,
+      portraitPosition: MATCH_SUMMARY_PORTRAIT_POSITIONS[index] || "0% 0%" });
   }
 
   function isResultBlankSpace(target) {

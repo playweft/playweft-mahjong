@@ -80,7 +80,7 @@ test("root and nested builds emit a complete game package and remove the precedi
         await access(join(outDir, url.pathname + (url.pathname.endsWith("/") ? "index.html" : "")));
       }
       const index = await readFile(join(dir, "index.html"), "utf8");
-      assert.ok(index.includes('id="mahjong-app"'), "root entry must be the game rather than a redirect to a fixed /mahjong/");
+      assert.ok(index.includes('id="app-root"'), "root entry must be the game rather than a redirect to a fixed /mahjong/");
       assert.match(index, /name="playweft-build-version" content="[a-f0-9]{16}"/);
       for (const page of ["index.html", "help.html"]) {
         const html = await readFile(join(dir, page), "utf8");

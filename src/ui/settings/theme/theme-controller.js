@@ -1,3 +1,4 @@
+import { viewFor } from "../../shared/component.js";
 import {
   activateMahjongAssetPack,
   configureMahjongAssetPackAppearance,
@@ -25,7 +26,12 @@ import {
   resolveMahjongOnlineCharacterVoice,
   resolveMahjongOnlinePortrait,
 } from "../../../storage/asset-packs.js";
-import { Check, ChevronsUpDown, Download, Trash2, createIcons } from "lucide";
+import {
+  renderThemePacks as renderPackOptions,
+  renderAppearanceCards,
+  renderSoundOptions,
+  unmountThemeControls,
+} from "./ThemeControls.jsx";
 import { getOrCreateMahjongDefaultCharacter } from "./default-character.js";
 import {
   getMahjongBuiltinCharacterForKey,
@@ -478,86 +484,20 @@ export function createMahjongThemeController({
   function syncDefaultMusicCopyright() {
     if (!copyrightElement) return;
     const copyright = getMahjongMatchMusicCopyright();
-    copyrightElement.textContent = copyright;
-    copyrightElement.hidden = !copyright;
+    viewFor(copyrightElement.closest("#settings-dialog")).update({ copyright });
   }
 
   function renderThemePacks() {
     const defaultPack = getMahjongDefaultPack();
     defaultPack.active = !visualPacks.some((pack) => pack.active);
     const packs = [defaultPack, ...visualPacks];
-    const localItems = packs.map((pack) => {
-      const item = document.createElement("li");
-      item.classList.toggle("is-active", pack.active);
-      item.dataset.packId = pack.id;
-      const details = document.createElement("span");
-      details.className = "settings-theme-row-details";
-      const title = document.createElement("span");
-      title.className = "settings-theme-title";
-      title.textContent = pack.name;
-      const summary = document.createElement("small");
-      summary.textContent = pack.isDefault
-        ? "内置主题包"
-        : `${pack.assetNames.length} 项装扮内容`;
-      details.append(title, summary);
-      const select = document.createElement("button");
-      select.type = "button";
-      select.className = "settings-theme-select";
-      select.dataset.packAction = "activate";
-      select.dataset.packId = pack.id;
-      select.disabled = pack.active;
-      select.append(details);
-      const actions = document.createElement("span");
-      actions.className = "settings-theme-actions";
-      if (pack.active) {
-        const active = document.createElement("span");
-        active.className = "settings-theme-current";
-        active.setAttribute("aria-label", "当前使用中");
-        active.title = "当前使用中";
-        active.innerHTML = '<i data-lucide="check" aria-hidden="true"></i>';
-        actions.append(active);
-      }
-      if (!pack.isDefault)
-        actions.append(
-          createVisualPackButton("删除", "delete", pack.id, "trash-2"),
-        );
-      item.append(select, actions);
-      return item;
-    });
     const downloadedUrls = new Set(
       visualPacks.map((pack) => pack.sourceUrl).filter(Boolean),
     );
-    const remoteItems = getMahjongConfiguredAssetPacks()
-      .filter((pack) => !downloadedUrls.has(pack.url))
-      .map((pack) => {
-        const item = document.createElement("li");
-        item.className = "is-remote";
-        const details = document.createElement("span");
-        details.className = "settings-theme-row-details";
-        const title = document.createElement("span");
-        title.className = "settings-theme-title";
-        title.textContent = pack.name;
-        const summary = document.createElement("small");
-        summary.textContent = "在线主题包";
-        details.append(title, summary);
-        const actions = document.createElement("span");
-        actions.className = "settings-theme-actions";
-        const download = createVisualPackButton(
-          "下载",
-          "download",
-          "",
-          "download",
-        );
-        download.dataset.packUrl = pack.url;
-        actions.append(download);
-        item.append(details, actions);
-        return item;
-      });
-    themeElements.list.replaceChildren(...localItems, ...remoteItems);
-    createIcons({
-      icons: { Check, Download, Trash2 },
-      root: themeElements.list,
-    });
+    const remote = getMahjongConfiguredAssetPacks().filter(
+      (pack) => !downloadedUrls.has(pack.url),
+    );
+    renderPackOptions(themeElements.list, packs, remote);
     renderAppearanceSettings();
     renderSoundSettings();
   }
@@ -566,14 +506,14 @@ export function createMahjongThemeController({
     const pack = getActiveVisualPack();
     const catalog = pack?.catalog;
     if (!pack || !catalog) {
-      appearanceElements.controls.replaceChildren();
+      renderAppearanceCards(appearanceElements.controls, []);
       appearanceElements.controls.hidden = true;
       return;
     }
     const portraitLabels = {
       self: "自己",
     };
-    const controls = document.createDocumentFragment();
+    const controls = [];
     const portraitRows = [];
     for (const [position, label] of Object.entries(portraitLabels)) {
       portraitRows.push(
@@ -586,7 +526,7 @@ export function createMahjongThemeController({
       );
     }
     if (catalog.portraits.length)
-      controls.append(createAppearanceCard("角色", portraitRows));
+      controls.push(createAppearanceCard("角色", portraitRows));
 
     const surfaceRows = [];
     for (const [label, key, options, selected] of [
@@ -603,9 +543,9 @@ export function createMahjongThemeController({
         surfaceRows.push(createAppearanceSelect(label, key, options, selected));
     }
     if (surfaceRows.length)
-      controls.append(createAppearanceCard("牌桌画面", surfaceRows));
+      controls.push(createAppearanceCard("牌桌画面", surfaceRows));
     if (catalog.lobbyBackgrounds.length) {
-      controls.append(
+      controls.push(
         createAppearanceCard("大厅", [
           createAppearanceSelect(
             "大厅背景",
@@ -616,13 +556,9 @@ export function createMahjongThemeController({
         ]),
       );
     }
-    const hasControls = controls.childElementCount > 0;
-    appearanceElements.controls.replaceChildren(controls);
+    const hasControls = controls.length > 0;
+    renderAppearanceCards(appearanceElements.controls, controls);
     appearanceElements.controls.hidden = !hasControls;
-    createIcons({
-      icons: { ChevronsUpDown },
-      root: appearanceElements.controls,
-    });
   }
 
   function renderSoundSettings() {
@@ -647,12 +583,8 @@ export function createMahjongThemeController({
         !catalog.riichiBgm?.length,
       ),
     ];
-    soundElements.controls.replaceChildren(createAppearanceList(rows));
+    renderSoundOptions(soundElements.controls, rows);
     soundElements.controls.hidden = false;
-    createIcons({
-      icons: { ChevronsUpDown },
-      root: soundElements.controls,
-    });
   }
 
   function getActiveVisualPack() {
@@ -663,27 +595,8 @@ export function createMahjongThemeController({
   }
 
   function createAppearanceCard(title, rows) {
-    const section = document.createElement("section");
-    section.className = "settings-appearance-card";
-    const heading = document.createElement("h2");
-    heading.className = "settings-appearance-card-title";
-    heading.textContent = title;
-    const list = createAppearanceList(rows);
-    section.append(heading, list);
-    return section;
+    return { title, rows };
   }
-
-  function createAppearanceList(rows) {
-    const list = document.createElement("ul");
-    list.className = "settings-list-card settings-appearance-list";
-    for (const row of rows) {
-      const item = document.createElement("li");
-      item.append(row);
-      list.append(item);
-    }
-    return list;
-  }
-
   function createAppearanceSelect(
     label,
     key,
@@ -692,54 +605,7 @@ export function createMahjongThemeController({
     emptyLabel = "",
     disabled = false,
   ) {
-    const row = document.createElement("label");
-    row.className = "settings-appearance-list-item";
-    if (disabled) row.classList.add("is-disabled");
-    const text = document.createElement("span");
-    text.textContent = label;
-    const select = document.createElement("select");
-    select.dataset.appearanceKey = key;
-    select.disabled = disabled;
-    if (emptyLabel) {
-      const option = document.createElement("option");
-      option.value = "";
-      option.textContent = emptyLabel;
-      option.selected = !selected;
-      select.append(option);
-    }
-    for (const option of options) {
-      const element = document.createElement("option");
-      element.value = option.id;
-      element.textContent = option.label;
-      element.selected = option.id === selected;
-      select.append(element);
-    }
-    const control = document.createElement("span");
-    control.className = "settings-appearance-select";
-    control.append(select);
-    control.insertAdjacentHTML(
-      "beforeend",
-      '<i class="settings-general-select-icon" data-lucide="chevrons-up-down" aria-hidden="true"></i>',
-    );
-    row.append(text, control);
-    return row;
-  }
-
-  function createVisualPackButton(label, action, id = "", iconName = "") {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.packAction = action;
-    if (id) button.dataset.packId = id;
-    button.setAttribute("aria-label", label);
-    button.title = label;
-    if (iconName) {
-      button.className = "settings-theme-icon-button";
-      button.innerHTML =
-        '<i data-lucide="' + iconName + '" aria-hidden="true"></i>';
-    } else {
-      button.textContent = label;
-    }
-    return button;
+    return { label, key, options, selected, emptyLabel, disabled };
   }
 
   return {
@@ -770,6 +636,11 @@ export function createMahjongThemeController({
     getMatchMusicUrl: getMahjongMatchMusicUrl,
     getRiichiMusicUrl: getMahjongRiichiMusicUrl,
     destroy() {
+      unmountThemeControls(
+        themeElements.list,
+        appearanceElements.controls,
+        soundElements.controls,
+      );
       themeElements.upload.removeEventListener("change", onUploadChange);
       themeElements.uploadZone?.removeEventListener(
         "dragover",

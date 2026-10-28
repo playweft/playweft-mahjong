@@ -1,3 +1,6 @@
+import { Window } from "happy-dom";
+import { viewFor } from "../src/ui/shared/component.js";
+import { mountUi, appMarkup } from "./helpers/ui.jsx";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -938,24 +941,16 @@ test("mahjong keeps action buttons in a fixed player-facing order", () => {
     },
   );
 
-  const view = readFileSync(
-    new URL("../src/ui/table/dom-view.js", import.meta.url),
-    "utf8",
-  );
-  const chiPosition = view.indexOf(
-    'elements.claims.append(this.createGroupedClaimAction(chiClaims, "chi"))',
-  );
-  const ponPosition = view.indexOf(
-    'elements.claims.append(this.createGroupedClaimAction(ponClaims, "pon"))',
-  );
-  const immediatePosition = view.indexOf(
-    "for (const claim of immediateClaims)",
-  );
-  assert.ok(
-    chiPosition > 0 &&
-      chiPosition < ponPosition &&
-      ponPosition < immediatePosition,
-  );
+  const window = new Window();
+  mountUi(window.document);
+  viewFor(window.document.querySelector("#player-dock")).update({ game: {
+    players: ["a", "b", "c", "d"], ownHand: [], legalActions: { claims: [
+      { kind: "ron", option: 4 }, { kind: "pon", option: 2 }, { kind: "kan", option: 3 }, { kind: "chi", option: 1 },
+    ] },
+  } });
+  const buttons = [...window.document.querySelectorAll("#claim-actions button")];
+  assert.deepEqual(buttons.map((button) => button.className), ["claim-action claim-chi", "claim-action claim-pon", "claim-action claim-kan", "claim-action claim-ron"]);
+  void window.happyDOM.close();
 
 });
 
@@ -1064,10 +1059,7 @@ test("mahjong shows oversized non-perspective callouts for claims, riichi, and w
 });
 
 test("mahjong presents winning, exhaustive-draw, and nine-terminals hands before results", () => {
-  const html = readFileSync(
-    new URL("../index.html", import.meta.url),
-    "utf8",
-  );
+  const html = appMarkup();
 
   assert.ok(
     html.indexOf('id="result-panel"') > html.indexOf('class="player-dock"'),
@@ -2529,10 +2521,7 @@ test("mahjong centre console leaves every three-row river visible", () => {
 });
 
 test("mahjong keeps honba and riichi sticks in the top-left status panel", () => {
-  const html = readFileSync(
-    new URL("../index.html", import.meta.url),
-    "utf8",
-  );
+  const html = appMarkup();
   const statusStart = html.indexOf('class="table-status-semantic"');
   const matchType = html.indexOf('class="match-type-label"');
   const tableStart = html.indexOf('class="table-shell"');

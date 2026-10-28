@@ -1,5 +1,4 @@
 // The lobby is independent of the Three.js match runtime.
-import { BookOpen, ChevronRight, Cog, UsersRound, createIcons } from "lucide";
 import { createPlayweftClient } from "../platform/playweft-client.js";
 import { initializeMahjongStorage } from "../storage/initialize.js";
 import { createCareerStore } from "../storage/career-store.js";
@@ -30,8 +29,6 @@ export async function createMahjongApplication({
   };
   const settingsButton = document.querySelector("#settings-button");
   const paipuButton = document.querySelector(".setup-paipu-entry");
-  createIcons({ icons: { BookOpen, ChevronRight, UsersRound }, root: elements.setup });
-  createIcons({ icons: { Cog }, root: settingsButton });
   deferMahjongDecorativeAssets({ document, window, urls: {
     "--mahjong-default-portrait-image": defaultPortraitsUrl,
     "--mahjong-default-table-background-image": defaultTableBackgroundUrl,

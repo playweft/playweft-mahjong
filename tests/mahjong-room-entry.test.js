@@ -1,3 +1,4 @@
+import { mountUi } from "./helpers/ui.jsx";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
@@ -13,14 +14,15 @@ function deferred() {
   return { promise, resolve, reject };
 }
 function fixture({ flush, create = async () => ({ roomId: "room-1" }) } = {}) {
-  const button = new EventTarget();
-  button.setAttribute = (name, value) => { button[name] = value; };
+  const window = new Window();
+  mountUi(window.document);
+  const button = window.document.querySelector("#create-room-button");
   const errors = [];
   const entry = createMahjongRoomEntry({
     button, getClient: () => ({ createRoom: create }), beforeCreate: flush,
     showError: (message) => errors.push(message),
   });
-  return { button, entry, errors, click: () => button.dispatchEvent(new Event("click")) };
+  return { button, entry, errors, click: () => button.click() };
 }
 
 test("Mahjong defaults to solo while retaining room play", async () => {
@@ -56,7 +58,7 @@ test("Mahjong flushes progress before creating once, and lets the platform navig
   f.entry.setContext(context);
   f.click(); f.click();
   assert.equal(f.button.disabled, true);
-  assert.equal(f.button["aria-busy"], "true");
+  assert.equal(f.button.getAttribute("aria-busy"), "true");
   assert.deepEqual(actions, ["save"]);
   saved.resolve();
   await tick();
@@ -66,7 +68,7 @@ test("Mahjong flushes progress before creating once, and lets the platform navig
   await tick();
   assert.deepEqual(actions, ["save", "create"]);
   assert.equal(f.button.disabled, false);
-  assert.equal(f.button.textContent, "友人戦");
+  assert.equal(f.button.textContent.trim(), "友人戦");
   assert.deepEqual(f.errors, []);
   f.entry.destroy();
 });
@@ -145,31 +147,26 @@ test("The shared bridge sends room.create without params and preserves platform 
 });
 
 test("Mahjong room entry updates its label without removing the icon", async () => {
-  const { promise, resolve } = deferred();
-  const label = {};
-  const button = new EventTarget();
-  button.querySelector = () => label;
-  button.setAttribute = () => {};
-  const entry = createMahjongRoomEntry({
-    button, getClient: () => ({ createRoom: () => promise }),
-    beforeCreate: async () => {}, showError: assert.fail,
-  });
+  const window = new Window();
+  mountUi(window.document);
+  const button = window.document.querySelector("#create-room-button");
+  const label = button.querySelector("[data-room-entry-label]");
+  const icon = button.querySelector("svg");
+  const pending = deferred();
+  const entry = createMahjongRoomEntry({ button, getClient: () => ({ createRoom: () => pending.promise }), showError: assert.fail });
   entry.setContext(context);
-  assert.equal(label.textContent, "友人戦");
-  button.dispatchEvent(new Event("click"));
+  button.click();
   assert.equal(label.textContent, "创建中");
-  assert.equal(button.textContent, undefined);
-  resolve({ roomId: "room-1" });
-  await tick();
+  assert.equal(button.querySelector("svg"), icon);
+  pending.resolve(); await tick();
   assert.equal(label.textContent, "友人戦");
   entry.destroy();
+  await window.happyDOM.close();
 });
 
-
 test("the home friend-battle sign uses the room entry controller and keeps other menus separate", async () => {
-  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
   const window = new Window();
-  window.document.body.innerHTML = html.slice(html.indexOf("<body>") + 6, html.indexOf("</body>"));
+  mountUi(window.document);
   const button = window.document.querySelector("#create-room-button");
   assert.equal(button.closest("[data-lobby-page]").dataset.lobbyPage, "home");
   assert.equal(window.document.querySelectorAll("#create-room-button").length, 1);

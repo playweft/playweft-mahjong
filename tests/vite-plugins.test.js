@@ -15,7 +15,7 @@ import { mahjongDefaultAssets } from "../build/vite/plugins/mahjong-default-asse
 test("Vite config keeps the configured dev port and composes its build plugins", () => {
   assert.equal(viteConfig.server.port, 9141);
   assert.deepEqual(
-    viteConfig.plugins.map((plugin) => plugin.name),
+    viteConfig.plugins.flat(Infinity).map((plugin) => plugin.name).filter((name) => ["mahjong-default-assets", "game-package", "emit-build-version", "static-site"].includes(name)),
     [
       "mahjong-default-assets",
       "game-package",

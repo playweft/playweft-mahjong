@@ -98,7 +98,8 @@ versioned CDN URL.
 
 ## Development
 
-The client uses JavaScript, HTML, CSS, and Three.js. Local rules and AI run in a
+The client uses Preact with JSX for the interface, CSS for styling, and Three.js
+for the table. Local rules and AI run in a
 Web Worker using Lua and Wasmoon; room rules run on the Playweft server.
 
 | Command | Description |
@@ -115,9 +116,10 @@ index.html      Game entry
 help.html       Rules page
 playweft.json   Playweft package manifest
 src/
-  app/          Startup, sessions, and match coordination
+  main.jsx      Mount the Preact application
+  app/          App composition, startup, sessions, and match coordination
   game/         Rules, AI, career progression, and replay models
-  ui/           Lobby, table controls, results, replays, and settings
+  ui/           Preact components for the lobby, table, settings, and results
   render/       Three.js scenes, tile models, animation, and audio
   runtime/      Lua/Wasm execution and Web Workers
   platform/     Playweft bridge, RPC, and room profiles

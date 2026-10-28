@@ -1,3 +1,4 @@
+import { viewFor } from "./component.js";
 /** Shows short, non-blocking Mahjong status notices over any screen. */
 export function createMahjongTransientNotice({
   element,
@@ -5,6 +6,7 @@ export function createMahjongTransientNotice({
   duration = 4600,
   transitionDuration = 180,
 } = {}) {
+  const view = element ? viewFor(element) : null;
   let hideTimer = 0;
   let concealTimer = 0;
 
@@ -18,14 +20,13 @@ export function createMahjongTransientNotice({
   function show(message) {
     if (!element || typeof message !== "string" || !message) return;
     clearTimers();
-    element.textContent = message;
-    element.hidden = false;
+    view.update({ message, visible: true });
     void element.offsetWidth;
-    element.classList.add("is-visible");
+    view.update({ shown: true });
     hideTimer = window?.setTimeout(() => {
-      element.classList.remove("is-visible");
+      view.update({ shown: false });
       concealTimer = window?.setTimeout(() => {
-        if (!element.classList.contains("is-visible")) element.hidden = true;
+        if (!view.state.shown) view.update({ visible: false });
       }, transitionDuration);
     }, duration);
   }

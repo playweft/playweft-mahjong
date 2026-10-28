@@ -1,3 +1,4 @@
+import { mountUi } from "./helpers/ui.jsx";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -52,8 +53,7 @@ test("accepted final action saves progress and settlement together and forwards 
 
 test("lobby navigation keeps training lengths in the submenu and exposes three career slots", async () => {
   const window = new Window();
-  const html = await readFile("index.html", "utf8");
-  window.document.body.innerHTML = html.slice(html.indexOf("<body>") + 6, html.indexOf("</body>"));
+  mountUi(window.document);
   const entries = new Map();
   const store = createCareerStore({ getItem: (key) => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) });
   window.matchMedia = () => ({ matches: true });

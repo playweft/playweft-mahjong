@@ -5,7 +5,7 @@ source_font=${1:?"Usage: bash build-bakudai-subset.sh /path/to/Bakudai-Regular.w
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 font_dir="$script_dir/../../src/assets/fonts"
 
-node "$script_dir/mahjong-brush-text.js" --write
+node --import tsx "$script_dir/mahjong-brush-text.js" --write
 
 python3 - "$source_font" "$font_dir" <<'PYFONT'
 import sys

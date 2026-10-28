@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -6,7 +9,8 @@ import { createServer } from "vite";
 const root = fileURLToPath(new URL("../", import.meta.url));
 
 test("the root dev entry serves the game package and former entry URLs return 404", async () => {
-  const server = await createServer({ root, logLevel: "silent", server: { port: 0, host: "127.0.0.1" } });
+  const cacheDir = await mkdtemp(join(tmpdir(), "mahjong-vite-test-"));
+  const server = await createServer({ root, cacheDir, logLevel: "silent", optimizeDeps: { noDiscovery: true, include: [] }, server: { port: 0, host: "127.0.0.1" } });
   try {
     await server.listen();
     const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
@@ -15,8 +19,8 @@ test("the root dev entry serves the game package and former entry URLs return 40
       const response = await fetch(origin + prefix);
       assert.equal(response.status, 200);
       const html = await response.text();
-      assert.match(html, /id="mahjong-app"/);
-      const main = html.match(/src="([^" ]*src\/main\.js)"/);
+      assert.match(html, /id="app-root"/);
+      const main = html.match(/src="([^" ]*src\/main\.jsx)"/);
       assert.ok(main, "HTML must load the standalone entry");
       assert.equal((await fetch(new URL(main[1], origin + prefix))).status, 200);
       const manifestResponse = await fetch(origin + prefix + "playweft.json");
@@ -38,12 +42,13 @@ test("the root dev entry serves the game package and former entry URLs return 40
       const response = await fetch(origin + path);
       assert.equal(response.status, 404, path);
     }
-    for (const path of ["/src/main.js", "/src/app/application.js", "/src/runtime/workers/local-game-worker.js", "/src/styles/main.css"]) {
+    for (const path of ["/src/main.jsx", "/src/app/application.js", "/src/runtime/workers/local-game-worker.js", "/src/styles/main.css"]) {
       const response = await fetch(origin + path);
       assert.equal(response.status, 200, path);
       assert.doesNotMatch(await response.text(), /games\/mahjong\//);
     }
   } finally {
     await server.close();
+    await rm(cacheDir, { recursive: true, force: true });
   }
 });

@@ -1,3 +1,4 @@
+import { mountUi } from "./helpers/ui.jsx";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -9,8 +10,7 @@ import { createMahjongSoloSave } from "../src/game/replay/solo-save.js";
 
 async function fixture({ flush = async () => {}, onStartLeague = async () => {}, onReturnToLobby = async () => {}, showError = assert.fail } = {}) {
   const window = new Window();
-  const html = await readFile("index.html", "utf8");
-  window.document.body.innerHTML = html.slice(html.indexOf("<body>") + 6, html.indexOf("</body>"));
+  mountUi(window.document);
   const data = new Map();
   const store = createCareerStore({ getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) });
   store.activate(2);

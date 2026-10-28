@@ -39,6 +39,10 @@ function createController({
     },
     elements,
     domView: {
+      setMatchSummary(patch) {
+        if (patch.visible !== undefined && elements.matchSummary) elements.matchSummary.hidden = !patch.visible;
+        if (patch.room !== undefined && elements.matchSummarySetup) elements.matchSummarySetup.hidden = patch.room;
+      },
       visualUi(_playerName, selectedTileId) {
         return selectedTileId ? { selectedTileId } : {};
       },
