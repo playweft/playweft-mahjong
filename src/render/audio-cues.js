@@ -15,7 +15,9 @@ export function riverTileSoundCue(state, events) {
   if (!event) return null;
   const seat = Number(event.playerIndex) || 0;
   const tile = Number(event.tile) || 0;
+  const river = asArray(state?.discards?.[state?.players?.[seat - 1]]);
   return {
+    riverKey: river.length ? `${seat}:${river.length - 1}` : "",
     key: [
       Number(state?.roundWind) || 0,
       Number(state?.handNumber) || 0,

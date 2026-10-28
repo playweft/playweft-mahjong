@@ -103,6 +103,7 @@ export function createMahjongTableController({
   let matchSummaryVisible = false;
   let voicedEventKey = "";
   let playedRiverTileSoundKey = "";
+  let cancelRiverTileSound = null;
   let pendingDiscard = null;
   let pendingDiscardRecovery = null;
   let discardSubmissionPending = false;
@@ -189,6 +190,8 @@ export function createMahjongTableController({
   }
 
   function reset() {
+    cancelPendingRiverTileSound();
+    playedRiverTileSoundKey = "";
     pendingDiscard = null;
     pendingDiscardRecovery = null;
     discardSubmissionPending = false;
@@ -885,14 +888,25 @@ export function createMahjongTableController({
     const cue = riverTileSoundCue(state, events);
     if (!cue || cue.key === playedRiverTileSoundKey) return;
     playedRiverTileSoundKey = cue.key;
-    const volume =
-      cue.volume * settingsDialog.masterVolumeScale * settingsDialog.discardVolumeScale;
-    if (volume <= 0) return;
-    riverTileSound.pause();
-    riverTileSound.currentTime = 0;
-    riverTileSound.volume = volume;
-    riverTileSound.playbackRate = cue.playbackRate;
-    void riverTileSound.play().catch(() => {});
+    cancelPendingRiverTileSound();
+    const play = () => effectRunner.run("river tile contact sound", () => {
+      cancelRiverTileSound = null;
+      const volume =
+        cue.volume * settingsDialog.masterVolumeScale * settingsDialog.discardVolumeScale;
+      if (volume <= 0) return;
+      riverTileSound.pause();
+      riverTileSound.currentTime = 0;
+      riverTileSound.volume = volume;
+      riverTileSound.playbackRate = cue.playbackRate;
+      void riverTileSound.play().catch(() => {});
+    });
+    cancelRiverTileSound = visualRenderer.afterRiverTileContact?.(cue.riverKey, play) ?? null;
+    if (!cancelRiverTileSound) play();
+  }
+
+  function cancelPendingRiverTileSound() {
+    cancelRiverTileSound?.();
+    cancelRiverTileSound = null;
   }
 
   function playRoleVoices(events) {
@@ -1477,6 +1491,7 @@ export function createMahjongTableController({
   }
 
   function suspend() {
+    cancelPendingRiverTileSound();
     matchMusicController.suspend();
     riverTileSound.pause();
     presentation.suspend();
@@ -1498,6 +1513,7 @@ export function createMahjongTableController({
   }
 
   function destroy() {
+    cancelPendingRiverTileSound();
     if (scoreDisplayTimer) browserWindow.clearTimeout(scoreDisplayTimer);
     scoreDisplayTimer = 0;
     presentation.destroy();

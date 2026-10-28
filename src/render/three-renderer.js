@@ -69,6 +69,11 @@ import { ThreeMahjongTable } from "./three-table.js";
 import { ThreeAnimationController } from "./three-animation-controller.js";
 import { ThreeKeyedSceneLayer } from "./three-keyed-scene-layer.js";
 import {
+  newRiverEntryKeys,
+  sameRiverContext,
+  ThreeRiverEntryMotion,
+} from "./three-river-entry.js";
+import {
   createPendingClaimOutlinePass,
   shouldShowPendingClaimOutline,
   setPendingClaimOutlineBreath,
@@ -124,6 +129,7 @@ export class MahjongThreeRenderer {
       if (updatesShadow) this.renderer.shadowMap.needsUpdate = true;
       this.drawFrame();
     });
+    this.riverEntryMotion = new ThreeRiverEntryMotion(this.animations);
   }
 
   async init() {
@@ -445,6 +451,17 @@ export class MahjongThreeRenderer {
       ui.animateDealIn,
     );
     if (!dealInKey) this.animations.resetKey("new-hand-deal");
+    const riverContextUnchanged = sameRiverContext(this.state, state) &&
+      (Number(this.ui?.viewerSeat) || 1) === (Number(ui.viewerSeat) || 1);
+    this.newRiverEntryKeys = riverContextUnchanged
+      ? newRiverEntryKeys(this.state, state)
+      : new Set();
+    if (!riverContextUnchanged) {
+      this.riverLayer.clear((record) => this.riverEntryMotion.remove(record));
+    } else {
+      const moves = (Number(state.moveCount) || 0) - (Number(this.state.moveCount) || 0);
+      if (moves < 0 || moves > 1) this.riverEntryMotion.finishAll();
+    }
     this.state = state;
     this.ui = ui;
     this.showGameHints = ui.showGameHints !== false;
@@ -1187,6 +1204,7 @@ export class MahjongThreeRenderer {
         riverEntries.push({
           key: `${seat}:${sourceIndex}`,
           seat,
+          position,
           transform,
           jitter: planarTileJitter(
             `${seat}:river:${sourceIndex}:${discard.type}`,
@@ -1209,6 +1227,7 @@ export class MahjongThreeRenderer {
       create: (entry) => this.createRiverRecord(entry),
       update: (record, entry, lifecycle) =>
         this.updateRiverRecord(record, entry, lifecycle),
+      remove: (record) => this.riverEntryMotion.remove(record),
     });
     const pendingRecord = pendingKey
       ? this.riverLayer.records.get(pendingKey)
@@ -1224,6 +1243,11 @@ export class MahjongThreeRenderer {
     tile.rotation.x = -Math.PI / 2;
     slot.add(tile);
     return { node: slot, tile, visualKey: entry.visualKey };
+  }
+
+  afterRiverTileContact(key, callback) {
+    const record = this.riverLayer?.records.get(key);
+    return record ? this.riverEntryMotion.onContact(record, callback) : null;
   }
 
   updateRiverRecord(record, entry, { created }) {
@@ -1251,6 +1275,11 @@ export class MahjongThreeRenderer {
     record.node.rotation.y = entry.transform.yaw;
     record.node.scale.setScalar(1);
     applyPlanarJitter(record.node, entry.transform.yaw, entry.jitter);
+    this.riverEntryMotion.sync(record, {
+      key: entry.key,
+      position: entry.position,
+      animate: created && this.newRiverEntryKeys.has(entry.key),
+    });
   }
 
   drawMelds(state) {
@@ -1567,7 +1596,7 @@ export class MahjongThreeRenderer {
     this.cancelOwnDrawEntry();
     this.cancelOwnTileMotion();
     this.cancelDrag(false);
-    this.riverLayer?.clear();
+    this.riverLayer?.clear((record) => this.riverEntryMotion.remove(record));
     this.renderer?.domElement.removeEventListener(
       "pointerdown",
       this.onPointerDown,

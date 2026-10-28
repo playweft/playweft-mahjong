@@ -16,6 +16,9 @@ function createController({
   humanId = "human",
   elements = {},
   onShowMatchSummary,
+  afterRiverTileContact,
+  riverTileSound = { pause() {}, play: async () => {} },
+  audioSettings = { masterVolumeScale: 1, discardVolumeScale: 1 },
 } = {}) {
   const calls = [];
   const domOptions = [];
@@ -60,6 +63,7 @@ function createController({
       },
     },
     visualRenderer: {
+      afterRiverTileContact,
       render(state, _events, ui) {
         calls.push(["scene", state.moveCount, ui]);
       },
@@ -85,9 +89,9 @@ function createController({
       destroy() {},
     },
     effectRunner: createMahjongEffectRunner({ onError() {} }),
-    settingsDialog: { gameHintsEnabled: true, discardVolumeScale: 1 },
+    settingsDialog: { gameHintsEnabled: true, ...audioSettings },
     matchMusicController: music,
-    riverTileSound: { pause() {} },
+    riverTileSound,
     humanId,
     getGame: () => game,
     getGameInitializing: () => false,
@@ -126,6 +130,65 @@ test("finished-match summary can open a career grade reveal before rendering the
     assert.equal(summaries[0].matchEnded, true);
     assert.equal(elements.matchSummary.hidden, true);
   } finally { await window.happyDOM.close(); }
+});
+
+test("discard sound waits for geometric contact once, while late confirmation plays immediately", async () => {
+  let contact = null, plays = 0, subscriptions = 0;
+  const sound = { pause() {}, play: async () => { plays++; } };
+  const { controller } = createController({
+    riverTileSound: sound,
+    afterRiverTileContact(key, callback) {
+      subscriptions++;
+      assert.equal(key, "1:0");
+      contact = callback;
+      return () => { contact = null; };
+    },
+  });
+  const projection = {
+    state: { phase: "playing", players: ["human", "a", "b", "c"], ownHand: [], legalActions: {}, discards: { human: [{ type: 5 }] }, moveCount: 1 },
+    events: [{ type: "discarded", playerIndex: 1, tile: 17 }],
+  };
+  await controller.refresh(projection);
+  assert.equal(plays, 0);
+  assert.equal(subscriptions, 1);
+  await controller.refresh(projection);
+  assert.equal(subscriptions, 1, "repeat projections must keep the pending contact cue");
+  contact();
+  assert.equal(plays, 1);
+  assert.ok(sound.volume > 0);
+  await controller.refresh(projection);
+  assert.equal(plays, 1);
+  controller.destroy();
+
+  const { controller: late } = createController({
+    riverTileSound: sound,
+    afterRiverTileContact: () => null,
+  });
+  await late.refresh(projection);
+  assert.equal(plays, 2, "an already-landed optimistic discard must not wait for another contact");
+  late.destroy();
+});
+
+test("reset, suspension and destruction cancel queued discard sounds", async () => {
+  for (const operation of ["reset", "suspend", "destroy"]) {
+    let contact = null;
+    const { controller } = createController({
+      elements: { resultTrack: { classList: { add() {}, remove() {} }, querySelectorAll: () => [] } },
+      afterRiverTileContact(_key, callback) {
+        contact = callback;
+        return () => { contact = null; };
+      },
+      riverTileSound: { pause() {}, play() { throw new Error("stale sound"); } },
+    });
+    await controller.refresh({
+      state: { phase: "playing", players: ["human"], ownHand: [], legalActions: {}, discards: { human: [{ type: 1 }] }, moveCount: 1 },
+      events: [{ type: "discarded", playerIndex: 1, tile: 1 }],
+    });
+    assert.equal(typeof contact, "function");
+    controller[operation]();
+    assert.equal(contact, null);
+    controller.destroy();
+  }
 });
 
 test("mahjong room spectator gets a fixed read-only table projection", async () => {
