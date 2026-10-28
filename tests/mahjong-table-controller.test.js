@@ -191,6 +191,26 @@ test("reset, suspension and destruction cancel queued discard sounds", async () 
   }
 });
 
+test("solo claim controls stay available until the player records an intent", async () => {
+  let finish;
+  const response = new Promise((resolve) => { finish = resolve; });
+  const { controller, domOptions } = createController({ mode: "solo", onDispatch: () => response });
+  const state = {
+    phase: "claiming", moveCount: 3, turnIndex: 2, responseIndex: 1,
+    players: ["human", "a", "b", "c"], ownHand: [],
+    legalActions: { claims: [{ kind: "pon", option: 1 }] },
+  };
+  await controller.refresh({ state, events: [] });
+  assert.equal(domOptions.at(-1).actionInFlight, false);
+  const pending = controller.submitAction({ type: "claim", option: 1 });
+  assert.equal(domOptions.at(-1).actionInFlight, true);
+  await controller.refresh({ state: { ...state, phase: "playing", responseIndex: 0, legalActions: {} }, events: [] });
+  assert.equal(domOptions.at(-1).actionInFlight, false);
+  finish(true);
+  assert.equal(await pending, true);
+  controller.destroy();
+});
+
 test("mahjong room spectator gets a fixed read-only table projection", async () => {
   const dispatched = [];
   const { controller, domOptions, calls } = createController({

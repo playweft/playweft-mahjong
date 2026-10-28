@@ -11,6 +11,7 @@ import {
   roomTenpaiStateKey,
 } from "../game/rules/room-utils.js";
 import { AI_DELAY_MS } from "../game/rules/constants.js";
+import { createMahjongClaimPacing } from "../game/rules/claim-pacing.js";
 import { buildCompletedRoomPaipuRecord } from "../game/replay/room-paipu.js";
 
 const LATE_WALL_REPORT_START = 4;
@@ -34,6 +35,7 @@ export function createMahjongRoomController({
   getSession,
   tableController,
   visualRendererReady,
+  afterDiscardContact,
   settingsDialog,
   transientNotice,
   roomPlayerProfiles,
@@ -58,6 +60,7 @@ export function createMahjongRoomController({
   let roomAiAwaitingState = false;
   let roomAiSchedule = 0;
   let roomAiWaitResolve;
+  let roomClaimPacing;
   let roomAiGeneration = 0;
   let roomAiTurnKey = "";
   let roomAiState;
@@ -199,7 +202,9 @@ export function createMahjongRoomController({
       else showRoomWaiting();
       return;
     }
-    scheduleRoomAi(projection.state);
+    // Invalidate an older computation now; register contact pacing after the
+    // new river tile has actually been reconciled into the scene below.
+    roomAiState = projection.state;
     const hadState = Boolean(tableController.getState());
     const animateDealIn =
       !hadState ||
@@ -213,6 +218,7 @@ export function createMahjongRoomController({
         viewerSeat: Number(projection.viewer?.seat) || 1,
       });
       await tableController.refresh(projection, { animateDealIn });
+      scheduleRoomAi(projection.state);
       await presentationApplied;
       persistCompletedRoomPaipu(
         message?.state?.paipu,
@@ -519,6 +525,8 @@ export function createMahjongRoomController({
   }
 
   function cancelRoomAiWait() {
+    roomClaimPacing?.cancel();
+    roomClaimPacing = undefined;
     window.clearTimeout(roomAiSchedule);
     roomAiSchedule = 0;
     const resolve = roomAiWaitResolve;
@@ -530,6 +538,13 @@ export function createMahjongRoomController({
     if (roomAiBusy || getDestroyed?.() || !roomIsOwner || !aiContext || !actorId) return;
     roomAiBusy = true;
     let submitted = false;
+    const claimPacing = aiContext.phase === "claiming"
+      ? createMahjongClaimPacing({
+        state: roomAiState, afterDiscardContact,
+        setTimer: (callback, delay) => window.setTimeout(callback, delay),
+        clearTimer: (timer) => window.clearTimeout(timer),
+      }) : null;
+    roomClaimPacing = claimPacing;
     try {
       const players = (aiContext.players || []).map((id) => ({ id, name: id }));
       const currentIds = JSON.stringify(aiContext.players || []);
@@ -544,7 +559,9 @@ export function createMahjongRoomController({
       }
       const outcome = await roomAiGame.aiAction(aiContext, actorId);
       if (outcome?.status !== "acted" || !outcome.action) return;
-      await waitForRoomAiPacing(startedAt);
+      if (claimPacing) {
+        if (outcome.action.type === "claim") await claimPacing.ready;
+      } else await waitForRoomAiPacing(startedAt);
       if (
         !roomIsOwner ||
         getDestroyed?.() ||
@@ -562,6 +579,8 @@ export function createMahjongRoomController({
     } catch (error) {
       console.error("Mahjong room AI failed", error);
     } finally {
+      claimPacing?.cancel();
+      if (roomClaimPacing === claimPacing) roomClaimPacing = undefined;
       if (submitted) return;
       roomAiBusy = false;
       if (generation !== roomAiGeneration && roomAiState) {

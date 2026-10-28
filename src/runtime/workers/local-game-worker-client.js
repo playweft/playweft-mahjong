@@ -182,6 +182,16 @@ export async function createLocalLuaGame(options = {}) {
           { timeoutMs: Number(options.aiDecisionTimeoutMs) || 10000 },
         );
       },
+      aiClaimDecisions(viewerId = options.playerId) {
+        return request("aiClaimDecisions", { viewerId }, {
+          timeoutMs: Number(options.aiDecisionTimeoutMs) || 10000,
+        });
+      },
+      claimResponse(action, actorId, expectedVersion, viewerId = options.playerId) {
+        return request("claimResponse", { action, actorId, expectedVersion, viewerId }).then(
+          (response) => projectResponse(response, viewerId),
+        );
+      },
       aiAction(state, actorId) {
         return request("aiAction", { state, actorId });
       },

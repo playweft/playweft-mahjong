@@ -245,7 +245,6 @@ export function createMahjongTableController({
     state = projection.state;
     if (
       actionInFlight &&
-      getMode?.() === "room" &&
       roomActionStateKey(localContextState(state)) !== actionInFlight.baseStateKey
     ) {
       actionInFlight = null;
@@ -322,14 +321,16 @@ export function createMahjongTableController({
     renderCurrentState();
   }
 
-  function isOptimisticRoomAction(action) {
-    return getMode?.() === "room" &&
-      ["claim", "kan", "tsumo", "pass", "abort_nine"].includes(action?.type);
+  function isOptimisticTableAction(action) {
+    return (getMode?.() === "room" &&
+      ["claim", "kan", "tsumo", "pass", "abort_nine"].includes(action?.type)) ||
+      (getMode?.() === "solo" && state?.phase === "claiming" &&
+        ["claim", "pass"].includes(action?.type));
   }
 
   function submitAction(action) {
     if (isReadOnly()) return false;
-    const optimistic = isOptimisticRoomAction(action);
+    const optimistic = isOptimisticTableAction(action);
     if (optimistic) {
       if (actionInFlight || isActionInFlight?.()) return false;
       actionInFlight = {

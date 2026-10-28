@@ -7,6 +7,7 @@ import {
   shouldScheduleMahjongAiTurn,
 } from "../game/rules/auto-action-scheduler.js";
 import { automaticRiichiDiscard } from "../game/rules/game-format.js";
+import { createMahjongSoloClaimController } from "./solo-claim-controller.js";
 import {
   reconcileRoomAction,
   roomActionStateKey,
@@ -36,6 +37,7 @@ export function createMahjongSessionController({
   onProjectionTransitionError,
   onAiActionRejected,
   onAiError,
+  afterDiscardContact,
   delays,
   scheduler = createMahjongAutoActionScheduler(),
   now = () => globalThis.performance?.now?.() ?? Date.now(),
@@ -50,6 +52,15 @@ export function createMahjongSessionController({
   const settledRoomRequestIds = new Set();
   let scheduledTurnKey = "";
   let reconcilePending = false;
+  const soloClaims = createMahjongSoloClaimController({
+    humanId, getGame, getState,
+    isActive: () => getMode?.() === "solo",
+    persistAcceptedAction, refreshProjection,
+    onHumanAccepted: onSoloActionAccepted,
+    onError: onAiError,
+    onSettled: () => scheduleAi(),
+    afterDiscardContact,
+  });
 
   const sameCurrentGame = (candidate) => candidate === getGame?.();
 
@@ -110,6 +121,13 @@ export function createMahjongSessionController({
   ) {
     if (!getState?.() && getMode?.() !== "room") return false;
     if (actionInFlight) return false;
+    if (getMode?.() === "solo" && getState?.()?.phase === "claiming" &&
+      getGame?.()?.aiClaimDecisions && ["claim", "pass"].includes(action?.type)) {
+      if (source === "manual") cancelScheduler();
+      return soloClaims.respond(action);
+    }
+    if (soloClaims.isBusy()) return false;
+    soloClaims.cancel();
     if (source === "manual") cancelScheduler();
 
     if (getMode?.() === "room") {
@@ -361,7 +379,7 @@ export function createMahjongSessionController({
 
   function scheduleRoomAutomaticAction({ state, isCurrent } = {}) {
     const currentState = state ?? getState?.();
-    if (actionInFlight) {
+    if (actionInFlight || soloClaims.isBusy()) {
       reconcilePending = true;
       return false;
     }
@@ -390,7 +408,8 @@ export function createMahjongSessionController({
     retryIn = 0,
     recoveryAttempt = 0,
   } = {}) {
-    if (actionInFlight) {
+    if (getMode?.() !== "solo" || getState?.()?.phase !== "claiming") soloClaims.cancel();
+    if (actionInFlight || soloClaims.isBusy()) {
       reconcilePending = true;
       return false;
     }
@@ -416,6 +435,12 @@ export function createMahjongSessionController({
     cancelScheduler();
 
     const visualDelay = afterDealIn ? (delays?.newHandDeal ?? 0) : 0;
+    if (currentState.phase === "claiming" && getGame?.()?.aiClaimDecisions) {
+      soloClaims.ensure();
+      scheduleAutomaticAction(currentState, { visualDelay, scheduleKey: planKey, recoveryAttempt });
+      return true;
+    }
+    soloClaims.cancel();
     if (
       scheduleAutomaticAction(currentState, {
         visualDelay,
@@ -470,10 +495,11 @@ export function createMahjongSessionController({
     scheduleRoomAutomaticAction,
     cancelScheduledActions() {
       cancelScheduler();
+      soloClaims.cancel();
       reconcilePending = false;
     },
     isActionInFlight() {
-      return actionInFlight;
+      return actionInFlight || soloClaims.isBusy();
     },
     confirmRoomState(snapshot) {
       if (snapshot === undefined) return settleRoomAction({ outcome: "confirmed" });

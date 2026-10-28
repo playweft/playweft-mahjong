@@ -605,6 +605,7 @@ export function createMahjongMatchRuntime({
     getAutoActions: () => autoActionController.get(),
     getRiichiMode: () => tableController.isRiichiMode(),
     isKanDrawPending: () => presentation.kanDrawPending,
+    afterDiscardContact,
     sendRoomAction: (...args) =>
       roomController?.sendActionWithTenpaiReport(...args),
     onRoomUnavailable: () => {
@@ -670,6 +671,7 @@ export function createMahjongMatchRuntime({
   });
 
   roomController = createMahjongRoomController({
+    afterDiscardContact,
     window,
     elements,
     getPlayMode: matchCoordinator.getMode,
@@ -936,6 +938,13 @@ export function createMahjongMatchRuntime({
 
   function scheduleAi(options) {
     session?.scheduleAi(options);
+  }
+
+  function afterDiscardContact(state, callback) {
+    const pending = state.pendingDiscard;
+    return pending
+      ? visualRenderer.afterRiverTileContact(`${pending.playerIndex}:${Number(pending.discardIndex) - 1}`, callback)
+      : null;
   }
 
   function resumeMatchMusic() {

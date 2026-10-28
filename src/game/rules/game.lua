@@ -5106,12 +5106,13 @@ local function simulated_claim(state, claimant, option)
 	return hand, melds, discard
 end
 
-local function choose_ai_claim(state, claimant)
+local function choose_ai_claim(state, claimant, ron_only)
 	for index, option in ipairs(claimant.options) do
 		if option.kind == "ron" then
 			return { type = "claim", option = index }
 		end
 	end
+	if ron_only then return nil end
 	local seat, player_id = claimant.playerIndex, claimant.playerId
 	local current_hand, current_melds = state.hands[player_id], state.melds[player_id]
 	local current_shanten = hand_shanten(current_hand, current_melds, {})
@@ -5217,6 +5218,35 @@ local function choose_ai_claim(state, claimant)
 		end
 	end
 	return best and { type = "claim", option = best.index } or { type = "pass" }
+end
+
+-- All requested actors evaluate the same discard snapshot. The per-actor
+-- policy is also used by the room host's AI worker through ai_action().
+function ai_claim_decisions(state, actor_ids)
+	local actors, decisions = {}, {}
+	for _, actor_id in ipairs(actor_ids or {}) do actors[actor_id] = true end
+	local function add(claimant, action)
+		local option = action.type == "claim" and claimant.options[action.option] or nil
+		decisions[#decisions + 1] = {
+			actorId = claimant.playerId,
+			action = action,
+			priority = option and option_priority(option.kind) or 0,
+			distance = claimant.distance,
+		}
+	end
+	for _, claimant in ipairs(state.claimants or {}) do
+		if actors[claimant.playerId] and pending_claimant_for_player(state, claimant.playerId) then
+			local ron = choose_ai_claim(state, claimant, true)
+			if ron then add(claimant, ron) end
+		end
+	end
+	if #decisions > 0 then return decisions end
+	for _, claimant in ipairs(state.claimants or {}) do
+		if actors[claimant.playerId] and pending_claimant_for_player(state, claimant.playerId) then
+			add(claimant, choose_ai_claim(state, claimant))
+		end
+	end
+	return decisions
 end
 
 local function riichi_wait_profile(state, seat, candidate)

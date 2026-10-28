@@ -187,6 +187,40 @@ function __playweft_local_ai_decision(viewer_id)
   }
 end
 
+-- Decide the entire discard window before applying anybody's response. Ron
+-- options are already validated by the rules, so check all of them before
+-- spending time evaluating lower-priority calls.
+function __playweft_local_ai_claim_decisions(viewer_id)
+  if __local_state.phase ~= "claiming" then
+    return { status = "idle", version = __local_version, decisions = {} }
+  end
+  local actors = {}
+  for _, claimant in ipairs(__local_state.claimants or {}) do
+    if claimant.playerId ~= viewer_id then actors[#actors + 1] = claimant.playerId end
+  end
+  local decisions = ai_claim_decisions(__local_state, actors)
+  local human
+  local _, claimant = pending_claimant_for_player(__local_state, viewer_id)
+  if claimant then
+    human = { distance = claimant.distance, options = {} }
+    for index, option in ipairs(claimant.options) do
+      human.options[#human.options + 1] = { option = index, priority = option_priority(option.kind) }
+    end
+  end
+  return { status = "claiming", version = __local_version, decisions = decisions, human = human }
+end
+
+function __playweft_local_claim_response(action, actor_id, expected_version, action_at)
+  if expected_version ~= __local_version then
+    return { accepted = false, error = { code = "stale_claim_decision" }, version = __local_version }
+  end
+  if __local_state.phase ~= "claiming" or not pending_claimant_for_player(__local_state, actor_id) then
+    -- A higher-priority response may have cancelled this already-computed call.
+    return { accepted = false, skipped = true, version = __local_version }
+  end
+  return __playweft_local_action(action, actor_id, action_at)
+end
+
 function __playweft_local_ai_review(state, actor_id, action)
   if type(ai_action_review) ~= "function" then return nil end
   return ai_action_review(state, actor_id, action)
@@ -443,6 +477,8 @@ export async function createLocalLuaGame({
     const loadReplayHand = lua.global.get("__playweft_local_load_replay_hand");
     const advanceAiTurn = lua.global.get("__playweft_local_ai_turn");
     const decideCurrentAiAction = lua.global.get("__playweft_local_ai_decision");
+    const decideAiClaims = lua.global.get("__playweft_local_ai_claim_decisions");
+    const applyClaimResponse = lua.global.get("__playweft_local_claim_response");
     const decideAiAction = lua.global.get("__playweft_local_ai_action");
     const reviewAiAction = lua.global.get("__playweft_local_ai_review");
     const readLegalActions = lua.global.get("__playweft_local_legal_actions");
@@ -499,6 +535,14 @@ export async function createLocalLuaGame({
       aiDecision(viewerId = playerId) {
         ensureOpen(closed);
         return decideCurrentAiAction(viewerId);
+      },
+      aiClaimDecisions(viewerId = playerId) {
+        ensureOpen(closed);
+        return decideAiClaims(viewerId);
+      },
+      claimResponse(action, actorId, expectedVersion) {
+        ensureOpen(closed);
+        return applyClaimResponse(action, actorId, expectedVersion, Date.now());
       },
       aiActionReview(state, actorId, action) {
         ensureOpen(closed);

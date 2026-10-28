@@ -64,6 +64,11 @@ async function handle(type, payload) {
   if (type === "aiDecision") {
     return game.aiDecision(payload.viewerId);
   }
+  if (type === "aiClaimDecisions") return game.aiClaimDecisions(payload.viewerId);
+  if (type === "claimResponse") {
+    const result = game.claimResponse(payload.action, payload.actorId, payload.expectedVersion);
+    return { result, projection: game.view(payload.viewerId) };
+  }
   if (type === "aiAction") {
     return game.aiAction(payload.state, payload.actorId);
   }

@@ -62,6 +62,21 @@ standalone matches run `src/game/rules/game.lua` through a local Worker.
 `build/vite/plugins/game-package.js` serves/emits the Manifest and both Lua
 entries directly at the package root.
 
+Solo claim windows evaluate all AI responses against the same discard snapshot.
+`ai_claim_decisions` checks every AI's ron before running lower-priority call
+strategy; both batch evaluation and the room AI use the shared per-actor policy
+and rule priorities. The local bridge attaches a state version, and responses
+are checked against that version before being applied as ordinary claim/pass
+commands. The action journal remains replayable without a new save format.
+
+`solo-claim-controller.js` collects player intent while the Worker thinks, then
+applies responses by priority and seat. Until the player responds, claim
+controls stay interactive. The shared `claim-pacing.js` waits 250–400 ms after
+the renderer reports tile contact before an AI declares a claim. Computation
+overlaps the recognition interval; completed passes need no presentation delay.
+Room AI uses this same pacing, while its server-authorized per-actor contexts
+and action transport remain separate from solo authority.
+
 The bridge contract is documented in the platform's
 [integration guide](https://github.com/playweft/playweft/blob/main/docs/game-integration/README.md).
 

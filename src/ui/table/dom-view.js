@@ -98,7 +98,9 @@ export class MahjongDomView {
       const viewerTurn = !isSpectator && seat === this.viewerSeat;
       heading =
         state.phase === "claiming"
-          ? viewerTurn
+          ? actionInFlight
+            ? "等待其他玩家确认"
+            : viewerTurn
             ? "可以鸣牌"
             : seat > 0
               ? `${name} 正在考虑`

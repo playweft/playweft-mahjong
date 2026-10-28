@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import { createLocalLuaGame } from "../src/runtime/local-lua-game.js";
+import { createMahjongSessionController } from "../src/app/session-controller.js";
 
 const HUMAN_ID = "human";
 const PLAYERS = [
@@ -29,6 +30,162 @@ async function createGame(t, seed, sourceOverride) {
 function luaTableValues(value) {
   return Array.isArray(value) ? value : Object.values(value ?? {});
 }
+
+async function claimFixture(t, { humanRon = false, thirdRon = false, multipleRon = true, tripleRonAbort = false, pons = false } = {}) {
+  const source = await readFile("src/game/rules/game.lua", "utf8");
+  return createGame(t, 1, `${source}
+    local original_setup = setup
+    function setup(context)
+      local state = original_setup(context)
+      local function ids(types)
+        local copies, tiles = {}, {}
+        for _, kind in ipairs(types) do
+          copies[kind] = (copies[kind] or 0) + 1
+          tiles[#tiles + 1] = (kind - 1) * 4 + copies[kind]
+        end
+        return tiles
+      end
+      local ready = { 1,2, 4,5,6, 10,11,12, 19,20,21, 28,28 }
+      local chi = { 1,2,4,6,8,10,13,16,19,22,25,28,31 }
+      local quiet = { 1,4,7,10,13,16,19,22,25,28,29,30,31 }
+      local pon = { 3,3,1,4,7,10,13,16,19,22,25,28,31 }
+      state.hands.human = ids(${humanRon ? "ready" : "chi"})
+      state.riichi.human = ${humanRon}
+      state.hands["ai-1"] = ids(${pons ? "pon" : "ready"})
+      state.riichi["ai-1"] = ${!pons}
+      state.hands["ai-2"] = ids(${pons ? "pon" : thirdRon ? "ready" : "quiet"})
+      state.riichi["ai-2"] = ${thirdRon}
+      state.hands["ai-3"] = ids(quiet)
+      state.drawnTile, state.turnIndex = 9, 4
+      state.rules.multipleRon = ${multipleRon}
+      state.rules.tripleRonAbort = ${tripleRonAbort}
+      return on_action(state, { type = "discard", tileId = 9 }, { actor = { id = "ai-3" } }).state
+    end
+    do
+    local original_claim = choose_ai_claim
+    choose_ai_claim = function(state, claimant, ron_only)
+      if ron_only then return original_claim(state, claimant, true) end
+      ${pons ? `
+        assert(#state.claimResponses == 0, "Every AI must see the original response window")
+        for index, option in ipairs(claimant.options) do
+          if option.kind == "pon" then return { type = "claim", option = index } end
+        end
+        return { type = "pass" }
+      ` : `error("Ron must bypass expensive call strategy")`}
+    end
+    end
+  `);
+}
+
+test("a later AI ron is precomputed while the human can chi, then cancels that lower-priority intent", async (t) => {
+  const game = await claimFixture(t);
+  t.after(() => game.close());
+  assert.equal(game.aiDecision().status, "waiting_for_human");
+  const before = structuredClone(game.checkpoint());
+  const humanChi = luaTableValues(game.view().state.legalActions.claims).find((option) => option.kind === "chi");
+  assert.ok(humanChi);
+  const plan = game.aiClaimDecisions();
+  const decisions = luaTableValues(plan.decisions);
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0].actorId, "ai-1");
+  assert.equal(decisions[0].priority, 4);
+  assert.deepEqual(game.checkpoint().state.claimResponses, before.state.claimResponses);
+  assert.equal(game.checkpoint().version, before.version);
+  const stale = game.claimResponse(decisions[0].action, "ai-1", plan.version + 1);
+  assert.equal(stale.error.code, "stale_claim_decision");
+  const won = game.claimResponse(decisions[0].action, "ai-1", plan.version);
+  assert.equal(won.accepted, true);
+  assert.equal(game.view().state.winType, "ron");
+  const human = game.claimResponse({ type: "claim", option: humanChi.option }, HUMAN_ID, won.version);
+  assert.equal(human.skipped, true);
+  assert.equal(game.checkpoint().version, won.version);
+  assert.equal(luaTableValues(game.view().state.melds?.human).length, 0);
+});
+
+test("precomputed claims preserve multiple ron, head-bump and triple-ron abort rules", async (t) => {
+  for (const config of [
+    { multipleRon: true, thirdRon: false, tripleRonAbort: false, winners: 2 },
+    { multipleRon: false, thirdRon: false, tripleRonAbort: false, winners: 1 },
+    { multipleRon: true, thirdRon: true, tripleRonAbort: true, abort: true },
+  ]) {
+    const game = await claimFixture(t, { ...config, humanRon: true });
+    try {
+      const plan = game.aiClaimDecisions();
+      let version = plan.version;
+      for (const decision of luaTableValues(plan.decisions)) {
+        const result = game.claimResponse(decision.action, decision.actorId, version);
+        assert.equal(result.accepted, true);
+        version = result.version;
+      }
+      assert.equal(game.view().state.phase, "claiming", "a human ron must remain available after AI ron responses");
+      const option = luaTableValues(game.view().state.legalActions.claims).find((option) => option.kind === "ron");
+      assert.equal(game.claimResponse({ type: "claim", option: option.option }, HUMAN_ID, version).accepted, true);
+      const state = game.view().state;
+      assert.equal(state.phase, "hand_ended");
+      if (config.abort) assert.equal(state.abortiveReason, "三家和");
+      else {
+        assert.equal(luaTableValues(state.winners).length, config.winners);
+        if (!config.multipleRon) assert.deepEqual(state.winners, [HUMAN_ID]);
+      }
+    } finally { game.close(); }
+  }
+});
+
+test("AI calls share the original snapshot and resolve by seat rather than submission order", async (t) => {
+  const game = await claimFixture(t, { pons: true });
+  t.after(() => game.close());
+  const plan = game.aiClaimDecisions();
+  const decisions = luaTableValues(plan.decisions);
+  assert.equal(decisions.length, 2);
+  let version = plan.version;
+  for (const decision of [...decisions].reverse()) {
+    assert.equal(decision.priority, 3);
+    const result = game.claimResponse(decision.action, decision.actorId, version);
+    assert.equal(result.accepted, true);
+    version = result.version;
+  }
+  const state = game.view().state;
+  assert.equal(state.phase, "playing");
+  assert.equal(state.turnIndex, 2);
+  assert.equal(luaTableValues(state.melds["ai-1"]).length, 1);
+  assert.equal(luaTableValues(state.melds["ai-2"]).length, 0);
+});
+
+test("the solo session keeps an early chi intent responsive and saves only the AI's winning ron", async (t) => {
+  const authority = await claimFixture(t);
+  t.after(() => authority.close());
+  let state = authority.view().state;
+  const log = [];
+  const facade = {
+    aiClaimDecisions: () => authority.aiClaimDecisions(),
+    claimResponse(action, actor, version) {
+      const result = authority.claimResponse(action, actor, version);
+      return { result, projection: authority.view() };
+    },
+  };
+  const session = createMahjongSessionController({
+    humanId: HUMAN_ID, getMode: () => "solo", getGame: () => facade, getState: () => state,
+    getAutoActions: () => ({}), getRiichiMode: () => false,
+    refreshProjection: (projection) => { state = projection.state; },
+    persistAcceptedAction: (action, actorId) => log.push({ action, actorId }),
+    onAiError: (error) => { throw error; },
+  });
+  t.after(() => session.cancelScheduledActions());
+  session.scheduleAi();
+  assert.equal(session.isActionInFlight(), false);
+  const chi = luaTableValues(state.legalActions.claims).find((option) => option.kind === "chi");
+  assert.equal(await session.dispatch({ type: "claim", option: chi.option }), true);
+  assert.equal(state.phase, "hand_ended");
+  assert.equal(state.winType, "ron");
+  assert.equal(session.isActionInFlight(), false);
+  assert.equal(log.length, 1);
+  assert.equal(log[0].actorId, "ai-1");
+  const replay = await claimFixture(t);
+  try {
+    for (const entry of log) assert.equal(replay.action(entry.action, entry.actorId).accepted, true);
+    assert.deepEqual(replay.view().state.winners, state.winners);
+  } finally { replay.close(); }
+});
 
 test("local Mahjong runtime derives the active AI from its authoritative state", async (t) => {
   let game;

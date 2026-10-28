@@ -50,6 +50,7 @@ function createController({
       onActionRejected: callbacks.onActionRejected,
       onActionError: callbacks.onActionError,
       onProjectionTransitionError: callbacks.onProjectionTransitionError,
+      afterDiscardContact: callbacks.afterDiscardContact,
       delays: {
         ai: 10,
         autoDecision: 40,
@@ -94,6 +95,33 @@ test("mahjong session commits an accepted action before resuming AI work", async
 
   assert.equal(accepted, true);
   assert.deepEqual(order, ["saved", "state-reset", "rendered"]);
+  assert.equal(controller.isActionInFlight(), false);
+});
+
+test("solo claim planning does not lock player input; an early intent waits without mutating the game", async () => {
+  let planned = 0, acted = 0;
+  const game = {
+    async aiClaimDecisions() {
+      planned++;
+      return { status: "claiming", version: 1, decisions: [{ actorId: "ai-1", action: { type: "claim", option: 1 }, priority: 4, distance: 2 }] };
+    },
+    async claimResponse() { acted++; },
+    async action() { throw new Error("An intent must not bypass the response window"); },
+  };
+  const { controller } = createController({
+    state: { phase: "claiming", players: ["human", "ai-1"], legalActions: { claims: [{ kind: "pon", option: 1 }] } },
+    game,
+    callbacks: { afterDiscardContact: () => () => {} },
+  });
+  controller.scheduleAi();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(planned, 1);
+  assert.equal(controller.isActionInFlight(), false);
+  const intent = controller.dispatch({ type: "claim", option: 1 });
+  assert.equal(controller.isActionInFlight(), true);
+  assert.equal(acted, 0);
+  controller.cancelScheduledActions();
+  assert.equal(await intent, false);
   assert.equal(controller.isActionInFlight(), false);
 });
 
