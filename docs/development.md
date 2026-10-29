@@ -191,8 +191,16 @@ Saved, completed placements are not recalculated. Placement is bounded to
 E1–C2. These are provisional game-balance thresholds, not calibrated human-rank
 estimates.
 
-For a manual career discard, the match worker captures the pre-action snapshot,
+Evaluation runs only during the three placement matches; ranked league matches
+and training games do not request review or create a review Worker. The career
+store tracks the active phase without reparsing the slot on every input.
+
+For a manual placement discard, the match worker captures a compact pre-action snapshot,
 applies the action and returns its projection without running policy evaluation.
+The snapshot contains the player's hand, public melds/discards, score and round
+context, exposed dora indicators and only the live wall's length (zero-filled).
+It omits opponents' hands, future tile identities, ura indicators, paipu and
+historical logs, and is assembled inside Lua before crossing the Worker bridge.
 The client lazily creates a separate review Worker/engine, so neither the discard
 animation nor the authoritative worker's next AI/claim request waits for review.
 The session presents these accepted discards before persistence, including a
@@ -201,12 +209,21 @@ the latest journal only while the originating match/save generation is active.
 Settlement waits for outstanding reviews before computing the grade, and
 “暂时离开” drains them before closing the worker and flushing storage. Worker
 failure or review timeout counts as unavailable rather than an incorrect choice.
-Lua compares the same candidate set under one push/fold mode and returns score,
+One Lua candidate analysis supplies both the recommendation and its comparison
+with the selected action. Review completes the ukeire/wait analysis for every
+minimum-shanten candidate, with no extra precision for the selected discard.
+Legal riichi and dama on the same tile are separate actions. Signed preference
+margins reuse the existing policy's wait, value, threat, dealer and placement
+conditions; nearby thresholds have smaller margins. Riichi margins are converted
+to the current push/mixed/fold score units, and every legal action uses the same
+maximum action-score baseline. Review returns total score loss, riichi loss,
 shanten, acceptance, value and risk differences. JS uses
 `100 * (1 - clamp((scoreLoss - 14) / scale, 0, 1))`, rounded to an integer, with
 scales 300/400/1050 for push/mixed/fold; a normalized loss >=0.4 is a major deviation.
 The 14-point tolerance prevents near-equivalent choices from counting as errors.
-Agreement compares tile kind and red status, not interchangeable physical copies.
+Agreement compares action type, tile kind and red status, not interchangeable
+physical copies. Riichi availability respects closure, >=1000 points and at
+least four live-wall tiles.
 Forced post-riichi discards, automatic actions and non-discard decisions are not
 rated. Missing analysis is recorded separately rather than as a failed decision.
 These scores are heuristic policy comparisons, not expected-point loss or Elo.

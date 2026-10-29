@@ -56,7 +56,7 @@ async function handle(type, payload) {
     let careerAnalysis = null;
     if (payload.actionOptions?.evaluateCareer && ["discard", "riichi"].includes(payload.action?.type)) {
       try {
-        careerReviewState = game.checkpoint().state;
+        careerReviewState = game.careerReviewSnapshot(payload.actorId);
       } catch {
         careerAnalysis = { unavailable: true };
       }

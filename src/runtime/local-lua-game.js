@@ -397,6 +397,34 @@ function __playweft_local_checkpoint()
   }
 end
 
+function __playweft_local_career_snapshot(actor_id)
+  local state = __local_state
+  if state.phase ~= "playing" or state.players[state.turnIndex] ~= actor_id
+    or state.riichi[actor_id] then return nil end
+  local snapshot = {
+    phase = state.phase, players = copy_array(state.players),
+    hands = { [actor_id] = copy_array(state.hands[actor_id]) },
+    melds = copy_record_value(state.melds), discards = copy_record_value(state.discards),
+    scores = copy_array(state.scores), riichi = copy_record_value(state.riichi),
+    doubleRiichi = copy_record_value(state.doubleRiichi), ippatsu = copy_record_value(state.ippatsu),
+    firstTurn = copy_record_value(state.firstTurn),
+    kuikaeForbidden = { [actor_id] = copy_record_value(state.kuikaeForbidden and state.kuikaeForbidden[actor_id] or {}) },
+    rules = copy_record_value(state.rules),
+    matchType = state.matchType, roundWind = state.roundWind, handNumber = state.handNumber,
+    dealerIndex = state.dealerIndex, turnIndex = state.turnIndex, drawnTile = state.drawnTile,
+    kanCount = state.kanCount, honba = state.honba, riichiSticks = state.riichiSticks,
+    callOccurred = state.callOccurred, rinshanWin = state.rinshanWin, chankanWin = state.chankanWin,
+    moveCount = state.moveCount, wall = {}, deadWall = {},
+  }
+  -- Policy code uses only the live wall's length and exposed indicators.
+  -- Never send future draws, ura indicators, opponents' hands or paipu logs.
+  for index = 1, #state.wall do snapshot.wall[index] = 0 end
+  for index = 1, (state.kanCount + 1) * 2 do
+    snapshot.deadWall[index] = index % 2 == 1 and state.deadWall[index] or 0
+  end
+  return snapshot
+end
+
 function __playweft_local_paipu(server_time)
 	if type(export_paipu) ~= "function" then
 		error("Local game does not provide a paipu exporter")
@@ -488,6 +516,7 @@ export async function createLocalLuaGame({
     const readRiichiWaitReport = lua.global.get("__playweft_local_riichi_wait_report");
     const readCurrentGameTenpaiReport = lua.global.get("__playweft_local_current_game_tenpai_report");
     const createCheckpoint = lua.global.get("__playweft_local_checkpoint");
+    const readCareerSnapshot = lua.global.get("__playweft_local_career_snapshot");
     const restoreCheckpoint = lua.global.get("__playweft_local_restore");
     const exportPaipu = lua.global.get("__playweft_local_paipu");
     const context = {
@@ -579,6 +608,10 @@ export async function createLocalLuaGame({
       checkpoint() {
         ensureOpen(closed);
         return createCheckpoint();
+      },
+      careerReviewSnapshot(actorId = playerId) {
+        ensureOpen(closed);
+        return readCareerSnapshot(actorId);
       },
       exportPaipu() {
         ensureOpen(closed);

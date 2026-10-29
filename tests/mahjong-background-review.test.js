@@ -121,7 +121,7 @@ test("a delayed policy review uses the pre-discard snapshot after the authoritat
 test("the actual rules worker acknowledges a career discard without invoking policy evaluation", async (t) => {
   const source = await readFile("src/game/rules/game.lua", "utf8");
   t.mock.method(globalThis, "fetch", async () => new Response(`${source}
-    function ai_action() error("policy must not run in the action response") end
+    function ai_action_review() error("policy must not run in the action response") end
   `));
   const previous = Object.getOwnPropertyDescriptor(globalThis, "self");
   let receive;
@@ -152,9 +152,15 @@ test("the actual rules worker acknowledges a career discard without invoking pol
   const outcome = await request("action", { action, actorId: human, viewerId: human, actionOptions: { evaluateCareer: true } });
   assert.equal(outcome.result.accepted, true);
   assert.equal(outcome.careerAnalysis, null, "no policy is evaluated inline, even when it would fail");
-  assert.deepEqual(outcome.careerReviewState, before.state);
+  const snapshot = outcome.careerReviewState;
+  assert.equal(snapshot.moveCount, before.state.moveCount);
+  assert.deepEqual(snapshot.hands[human], before.state.hands[human]);
+  assert.deepEqual(Object.keys(snapshot.hands), [human]);
+  assert.equal(snapshot.paipu, undefined);
+  assert.equal(snapshot.wall.length, before.state.wall.length);
+  assert.ok(snapshot.wall.every((tile) => tile === 0));
   assert.ok(outcome.projection.state.moveCount > before.state.moveCount);
   const after = await request("checkpoint");
-  assert.deepEqual(await request("reviewCareerDiscard", { state: before.state, action, actorId: human }), { unavailable: true });
+  assert.deepEqual(await request("reviewCareerDiscard", { state: snapshot, action, actorId: human }), { unavailable: true });
   assert.deepEqual(await request("checkpoint"), after);
 });

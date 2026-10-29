@@ -4594,7 +4594,7 @@ local function endgame_tenpai_value(state, candidate, objective)
 	return value
 end
 
-local function choose_ai_discard(state, seat, hand, allowed, forbidden, melds, review_tile)
+local function choose_ai_discard(state, seat, hand, allowed, forbidden, melds, full_analysis)
 	local player_id = state.players[seat]
 	melds = melds or state.melds[player_id]
 	local allow
@@ -4639,7 +4639,7 @@ local function choose_ai_discard(state, seat, hand, allowed, forbidden, melds, r
 	local placement = placement_push_value(state, seat, objective)
 	local best_value = 0
 	for _, candidate in ipairs(candidates) do
-		candidate.value = estimated_hand_value(state, seat, candidate.hand, melds, candidate.shanten)
+		candidate.value, candidate.naturalValue = estimated_hand_value(state, seat, candidate.hand, melds, candidate.shanten)
 		local special = special_hand_profile(candidate.hand, melds)
 		candidate.special = math.min(special.chiitoi, special.kokushi)
 		candidate.specialRoute = special.chiitoi <= special.kokushi and "chiitoi" or "kokushi"
@@ -4682,7 +4682,7 @@ local function choose_ai_discard(state, seat, hand, allowed, forbidden, melds, r
 	end)
 	for index = 1, #ukeire_candidates do
 		local candidate = ukeire_candidates[index]
-		if index > 8 and candidate.tile ~= review_tile then goto continue_ukeire end
+		if index > 8 and not full_analysis then goto continue_ukeire end
 		candidate.ukeire = effective_tile_count(candidate.hand, melds, candidate.shanten, visible, cache)
 		if candidate.shanten == 0 then
 			candidate.wait = tenpai_wait_profile(state, seat, candidate.hand, melds, visible, tile_type(candidate.tile))
@@ -4838,11 +4838,8 @@ local function choose_ai_discard(state, seat, hand, allowed, forbidden, melds, r
 	end
 	best.folding, best.mode, best.pressure, best.aggression = mode == "fold", mode, pressure, aggression
 	best.objective = objective.mode
-	local reviewed
-	for _, candidate in ipairs(candidates) do
-		if candidate.tile == review_tile then reviewed = candidate end
-	end
-	return best.tile, best, reviewed
+	best.placement = placement
+	return best.tile, best, candidates
 end
 
 function setup(context)
@@ -5255,32 +5252,38 @@ local function riichi_wait_profile(state, seat, candidate)
 	return tenpai_wait_profile(state, seat, candidate.hand, state.melds[player_id], visible, tile_type(candidate.tile))
 end
 
-local function should_declare_riichi(state, seat, candidate)
+local function should_declare_riichi(state, seat, candidate, analysis)
 	local player_id = state.players[seat]
-	local value, natural = estimated_hand_value(state, seat, candidate.hand, state.melds[player_id])
-	local wait = riichi_wait_profile(state, seat, candidate)
+	local value, natural = candidate.value, candidate.naturalValue
+	if value == nil or natural == nil then
+		value, natural = estimated_hand_value(state, seat, candidate.hand, state.melds[player_id])
+	end
+	local wait = candidate.wait or riichi_wait_profile(state, seat, candidate)
 	local waits, quality = wait.count, wait.quality
-	local pressure = ai_threat_pressure(state, seat)
-	local objective = endgame_objective(state, seat)
-	local placement = placement_push_value(state, seat, objective)
+	local pressure = analysis and analysis.pressure or ai_threat_pressure(state, seat)
+	local objective = analysis and { mode = analysis.objective } or endgame_objective(state, seat)
+	local placement = analysis and analysis.placement or placement_push_value(state, seat, objective)
+	-- Signed heuristic preference in the same units as discard scores. Close
+	-- threshold decisions have a small gap; committing through a strong threat
+	-- has a larger gap. These are not calibrated expected point losses.
 	if waits == 0 then
-		return false
+		return false, -120, "dead_wait"
 	end
 	local leader = state.scores[1]
 	for index = 2, PLAYER_COUNT do
 		leader = math.max(leader, state.scores[index])
 	end
 	if state.scores[seat] + 8000 < leader or objective.mode == "chase" then
-		return true
+		return true, 90 + math.min(90, math.max(0, leader - state.scores[seat] - 8000) / 200), "chase"
 	end
 	if objective.mode == "protect" and quality < 4.2 and seat ~= state.dealerIndex then
-		return false
+		return false, -math.min(180, 30 + (4.2 - quality) * 50), "protect"
 	end
 	if pressure >= 1 and candidate.danger > 0.22 and seat ~= state.dealerIndex and placement <= 0.08 then
-		return false
+		return false, -(80 + math.min(160, (pressure - 1) * 100 + (candidate.danger - 0.22) * 250)), "threat"
 	end
 	if #state.wall <= 12 and (waits <= 2 or quality < 3) then
-		return false
+		return false, -math.min(140, 25 + (12 - #state.wall) * 5 + math.max(0, 3 - quality) * 25), "late_bad_wait"
 	end
 	-- A non-dealer's one-han bad-shape dama retains defense and improvement
 	-- room.  When behind, in the final hand, or with a shallow wall, riichi can
@@ -5292,21 +5295,27 @@ local function should_declare_riichi(state, seat, candidate)
 		and #state.wall >= 18
 		and state.scores[seat] + 8000 >= leader
 	then
-		return false
+		return false, -math.min(110, 25 + math.max(0, 3.4 - quality) * 30), "cheap_bad_wait"
 	end
 	if value >= 4 and quality >= 2 and placement <= 0.08 then
-		return false
+		return false, -math.min(160, 40 + (value - 4) * 25), "valuable_dama"
 	end
 	if natural < 1 and #state.wall <= 10 and quality < 3.2 and seat ~= state.dealerIndex then
-		return false
+		return false, -(25 + (10 - #state.wall) * 5 + (3.2 - quality) * 25), "late_no_yaku"
 	end
 	if seat == state.dealerIndex then
-		return quality >= 1.8 or value < 4.5
+		if quality >= 1.8 or value < 4.5 then
+			return true, math.min(160, 25 + math.max(0, quality - 1.8) * 25 + math.max(0, 4.5 - value) * 10), "dealer"
+		end
+		return false, -(25 + (1.8 - quality) * 25), "dealer_bad_wait"
 	end
-	return quality >= 3.4 or (value < 3 and waits >= 4)
+	if quality >= 3.4 or (value < 3 and waits >= 4) then
+		return true, math.min(160, 25 + math.max(0, quality - 3.4) * 25 + math.max(0, waits - 4) * 12), "live_wait"
+	end
+	return false, -math.min(160, 25 + math.max(0, 3.4 - quality) * 25 + math.max(0, value - 3) * 15), "dama_flexibility"
 end
 
-local function choose_ai_self_kan(state, seat, options)
+local function choose_ai_self_kan(state, seat, options, discard_profile)
 	if #options == 0 then
 		return nil
 	end
@@ -5324,8 +5333,11 @@ local function choose_ai_self_kan(state, seat, options)
 		return nil
 	end
 	local hand = hand_with_drawn(state, player_id)
-	local _, profile =
-		choose_ai_discard(state, seat, hand, nil, state.kuikaeForbidden and state.kuikaeForbidden[player_id])
+	local profile = discard_profile
+	if not profile then
+		local _
+		_, profile = choose_ai_discard(state, seat, hand, nil, state.kuikaeForbidden and state.kuikaeForbidden[player_id])
+	end
 	local value = estimated_hand_value(state, seat, hand, state.melds[player_id])
 	if profile and profile.shanten <= 1 and (value >= 1.5 or seat == state.dealerIndex or #state.wall >= 36) then
 		return options[1]
@@ -5354,21 +5366,55 @@ function ai_action_review(state, actor_id, action)
   local seat = player_index(state, actor_id)
   if not seat or state.phase ~= "playing" or state.turnIndex ~= seat
     or state.riichi[actor_id] or (action.type ~= "discard" and action.type ~= "riichi") then return nil end
+  if state.drawnTile > 0 and score_hand(state, seat, state.drawnTile, "tsumo") then return nil end
+  if can_abort_nine(state, actor_id) and should_abort_nine_tiles(state, actor_id) then return nil end
   local hand = hand_with_drawn(state, actor_id)
   local forbidden = state.kuikaeForbidden and state.kuikaeForbidden[actor_id]
-  local review_tile = action.tileId
-  for _, tile in ipairs(hand) do
-    if tile_type(tile) == tile_type(action.tileId)
-      and (RED_FIVES[tile] == true) == (RED_FIVES[action.tileId] == true) then
-      review_tile = tile
-      break
+  -- Compute every minimum-shanten candidate to the same depth exactly once.
+  -- No candidate gets extra precision merely because the player selected it.
+  local _, profile, candidates = choose_ai_discard(state, seat, hand, nil, forbidden, nil, true)
+  if not profile then return nil end
+  if choose_ai_self_kan(state, seat, self_kan_options(state, actor_id), profile) then return nil end
+  local can_riichi = is_closed_hand(state.melds[actor_id]) and state.scores[seat] >= 1000 and #state.wall >= 4
+  local riichi_scale = profile.mode == "fold" and 1050 / 300 or profile.mode == "mixed" and 400 / 300 or 1
+  local best, chosen, best_action, best_score, chosen_score, decision_count = nil, nil, nil, -math.huge, nil, 0
+  for _, candidate in ipairs(candidates) do
+    local delta, reason = nil, nil
+    if can_riichi and candidate.shanten == 0 then
+      local _
+      _, delta, reason = should_declare_riichi(state, seat, candidate, profile)
+      -- Preference margins start in push units. Convert them to this mode's
+      -- score units so a commitment error is not diluted by the fold scale.
+      delta = delta * riichi_scale
+    end
+    candidate.riichiDelta, candidate.riichiReason = delta, reason
+    decision_count = decision_count + 1 + (delta and 1 or 0)
+    for _, action_type in ipairs({ "discard", "riichi" }) do
+      if action_type == "discard" or delta then
+        local score = candidate.score + (action_type == "riichi" and delta or 0)
+        if score > best_score + 0.001
+          or (math.abs(score - best_score) <= 0.001 and candidate.tile == profile.tile) then
+          best, best_score = candidate, score
+          best_action = { type = action_type, tileId = candidate.tile }
+        end
+        if tile_type(candidate.tile) == tile_type(action.tileId)
+          and (RED_FIVES[candidate.tile] == true) == (RED_FIVES[action.tileId] == true)
+          and action_type == action.type then
+          chosen, chosen_score = candidate, score
+        end
+      end
     end
   end
-  local _, best, chosen = choose_ai_discard(state, seat, hand, nil, forbidden, nil, review_tile)
-  if not best or not chosen then return nil end
+  if not best or not chosen or decision_count <= 1 then return nil end
+  local chosen_preferred_score = chosen.score + math.max(0, chosen.riichiDelta or 0)
   return {
-    bestTile = best.tile, chosenTile = chosen.tile, mode = best.mode,
-    scoreLoss = math.max(0, best.score - chosen.score),
+    bestAction = best_action, bestTile = best.tile, chosenTile = chosen.tile, mode = profile.mode,
+    bestScore = best_score, chosenScore = chosen_score,
+    candidateCount = #candidates, decisionCount = decision_count,
+    riichiAvailable = can_riichi and chosen.shanten == 0,
+    riichiPreference = chosen.riichiDelta or 0, riichiReason = chosen.riichiReason,
+    riichiLoss = math.max(0, chosen_preferred_score - chosen_score),
+    scoreLoss = math.max(0, best_score - chosen_score),
     shantenLoss = math.max(0, chosen.shanten - best.shanten),
     ukeireLoss = chosen.shanten == best.shanten and math.max(0, best.ukeire - chosen.ukeire) or 0,
     riskIncrease = math.max(0, chosen.dealinRisk - best.dealinRisk),

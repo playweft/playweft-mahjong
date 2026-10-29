@@ -615,7 +615,7 @@ export function createMahjongMatchRuntime({
       tableController.clearActionInFlight();
       showMessage("尚未连接到房间");
     },
-    getSoloActionOptions: ({ source }) => ({ evaluateCareer: Boolean(careerStore?.activeSlot) && source === "manual" }),
+    getSoloActionOptions: ({ source }) => ({ evaluateCareer: Boolean(careerStore?.isPlacementActive) && source === "manual" }),
     persistAcceptedAction: (...args) =>
       soloSaveController.persistAcceptedAction(...args),
     refreshProjection: tableController.refresh,

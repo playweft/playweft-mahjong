@@ -6,6 +6,7 @@ import {
 
 export function createCareerStore(storage = getGameStorage("mahjong")) {
   let activeSlot = null;
+  let activePhase = null;
   function key(slot) {
     if (!Number.isInteger(slot) || slot < 1 || slot > 3) throw new RangeError("Invalid career slot");
     return CAREER_KEYS[slot - 1];
@@ -14,19 +15,22 @@ export function createCareerStore(storage = getGameStorage("mahjong")) {
   function write(slot, career) {
     const next = { ...career, revision: career.revision + 1, updatedAt: Date.now() };
     storage.setItem(key(slot), JSON.stringify(next));
+    if (slot === activeSlot) activePhase = next.phase;
     return next;
   }
   return {
     read, write,
     get activeSlot() { return activeSlot; },
+    get isPlacementActive() { return activeSlot !== null && activePhase === "placement"; },
     activate(slot) {
       key(slot);
       let career = read(slot);
       if (!career) career = write(slot, createCareer());
       activeSlot = slot;
+      activePhase = career.phase;
       return career;
     },
-    deactivate() { activeSlot = null; },
+    deactivate() { activeSlot = null; activePhase = null; },
     acknowledgePlacementResult() {
       if (!activeSlot) throw new Error("No active career");
       const career = read(activeSlot);

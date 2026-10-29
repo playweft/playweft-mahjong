@@ -289,8 +289,8 @@ test("bad saves are rejected without replacing their contents", () => {
 test("career discard review distinguishes near-equivalence, large loss, red fives and forced turns", () => {
   const state = { phase: "playing", turnIndex: 1, players: ["mahjong-player"], hands: { "mahjong-player": [18, 19, 17, 2] }, drawnTile: 3, riichi: {} };
   let scoreLoss = 10;
-  const game = { checkpoint: () => ({ state }), aiAction: () => ({ action: { type: "discard", tileId: 18 } }),
-    aiActionReview: () => ({ mode: "push", scoreLoss }) };
+  const game = { checkpoint: () => ({ state }), aiAction: () => assert.fail("review must reuse its own recommendation"),
+    aiActionReview: () => ({ mode: "push", scoreLoss, bestAction: { type: "discard", tileId: 18 } }) };
   const close = evaluateCareerDiscard(game, { type: "discard", tileId: 2 }, "mahjong-player");
   assert.equal(close.agreed, false);
   assert.equal(close.review.quality, 100);
@@ -301,6 +301,41 @@ test("career discard review distinguishes near-equivalence, large loss, red five
   state.riichi["mahjong-player"] = true;
   assert.equal(evaluateCareerDiscard(game, { type: "discard", tileId: 2 }, "mahjong-player"), null);
   assert.equal(evaluateCareerDiscard(game, { type: "pass" }, "mahjong-player"), null);
+});
+
+test("decision review includes the riichi choice even when the discarded tile matches", () => {
+  const state = { phase: "playing", turnIndex: 1, players: ["human"], hands: { human: [1] }, drawnTile: 2, riichi: {} };
+  const game = { checkpoint: () => ({ state }), aiActionReview: () => ({
+    bestAction: { type: "riichi", tileId: 1 }, riichiAvailable: true, mode: "push", scoreLoss: 152,
+  }) };
+  const result = evaluateCareerDiscard(game, { type: "discard", tileId: 1 }, "human");
+  assert.equal(result.eligible, true, "one tile kind can still offer two distinct decisions");
+  assert.equal(result.agreed, false);
+  assert.equal(result.review.quality, 54);
+  assert.equal(result.review.major, true);
+});
+
+test("only the three placement matches enable career evaluation, including resumed slots", () => {
+  const entries = new Map();
+  const storage = { getItem: (key) => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) };
+  const store = createCareerStore(storage);
+  assert.equal(store.isPlacementActive, false);
+  store.activate(1);
+  assert.equal(store.isPlacementActive, true);
+  for (let index = 0; index < 3; index++) {
+    assert.equal(store.isPlacementActive, true);
+    store.persistMatch(save(`placement-${index}`), { matchEnded: true,
+      players: ["mahjong-player", "a", "b", "c"], scores: [40000, 20000, 20000, 20000] });
+    store.clearMatch();
+  }
+  assert.equal(store.isPlacementActive, false);
+  const reloaded = createCareerStore(storage);
+  reloaded.activate(1);
+  assert.equal(reloaded.isPlacementActive, false);
+  reloaded.activate(2);
+  assert.equal(reloaded.isPlacementActive, true);
+  reloaded.deactivate();
+  assert.equal(reloaded.isPlacementActive, false);
 });
 
 test("slot summaries identify resumable games and next periods", () => {
