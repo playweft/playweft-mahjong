@@ -165,11 +165,17 @@ Initial placement grants C2 when three-match points total at least +120,
 regardless of decision metrics, or when the total is at least +90 and at least
 30 reviewed manual discards have mean quality strictly >80 and a major-deviation
 rate <=10%. Quality and mistakes are pooled across all reviewed decisions.
-Otherwise the three-match total determines the tier: >=+90 C3, >=+30 D1,
->=-30 D2, >=-90 D3, below -90 E1. There is no subsequent one-tier adjustment,
-no exact-agreement fallback and no hidden point bonus. Saved, completed placements
-are not recalculated. Placement is bounded to E1–C2. These are provisional
-game-balance thresholds, not calibrated human-rank estimates.
+Otherwise placement uses an internal quality correction:
+`clamp(2 * (meanQuality - 80), -40, 40) * min(1, reviewed / 60)`.
+No reviewed decisions means zero correction. Add it to the three-match total
+and use the thresholds >=+90 C3, >=+30 D1, >=-30 D2, >=-90 D3, below -90 E1.
+The correction never bypasses the raw-point or review requirements for C2, and
+major mistakes are not deducted again. Match points, saved settlement totals,
+league points and the result UI retain raw match scores; neither the correction
+nor the adjusted placement total is displayed or saved as a separate field.
+Saved, completed placements are not recalculated. Placement is bounded to
+E1–C2. These are provisional game-balance thresholds, not calibrated human-rank
+estimates.
 
 The match worker optionally reviews a manual career discard before applying it.
 Lua compares the same candidate set under one push/fold mode and returns score,

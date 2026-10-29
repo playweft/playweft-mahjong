@@ -65,6 +65,42 @@ test("third placement reveals the persisted grade and three real results, withou
   } finally { await f.close(); }
 });
 
+test("quality changes the placement grade while the result page and stored totals show only raw match points", async () => {
+  for (const [quality, grade] of [[100, "D1"], [60, "D3"]]) {
+    const f = await fixture();
+    try {
+      const matches = [
+        [35000, 25000, 22000, 18000],
+        [20000, 50000, 18000, 12000],
+        [10000, 40000, 30000, 20000],
+      ];
+      let career;
+      for (const [index, scores] of matches.entries()) {
+        const id = `quality-${quality}-${index}`;
+        const current = f.store.read(2);
+        f.store.write(2, { ...current, analysis: {
+          ...current.analysis, matchId: id, eligible: 20, reviewed: 20,
+          qualityTotal: quality * 20, majorMistakes: quality <= 60 ? 20 : 0,
+        } });
+        career = f.finishMatch(id, scores);
+        if (index < 2) f.store.clearMatch();
+      }
+      assert.equal(career.tier, grade);
+      assert.equal(career.lastSettlement.total, 0);
+      assert.deepEqual(career.placement.map((result) => result.points), [40, 5, -45]);
+      const loaded = parseCareer(JSON.stringify(career));
+      assert.equal(loaded.tier, grade);
+      assert.equal(loaded.lastSettlement.total, 0);
+      assert.equal(f.page.show(loaded), true);
+      assert.equal(f.panel.querySelector("#career-result-grade").textContent, grade);
+      assert.equal(f.panel.querySelector("#career-result-total").textContent, "0.0 pt");
+      assert.deepEqual([...f.panel.querySelectorAll("tbody tr")].map((row) => row.textContent),
+        ["第一场1位35000+40.0", "第二场2位20000+5.0", "第三场4位10000-45.0"]);
+      assert.doesNotMatch(f.panel.textContent, /质量|修正|决策|一致率|评价/);
+    } finally { await f.close(); }
+  }
+});
+
 for (const [button, action] of [["start", "league"], ["back", "lobby"]]) {
   test(`${action} waits for storage, acknowledges only this slot and prevents double activation`, async () => {
     let flushed;

@@ -114,7 +114,7 @@ test("90-point decision route uses strict quality >80, inclusive 10% mistakes an
   assert.equal(placementTier(placementResults(90, { reviewed: 30, quality: 90, major: 4 })), "C3");
   assert.equal(placementTier(placementResults(90, { reviewed: 29 })), "C3");
   assert.equal(placementTier(placementResults(90, { agreed: 100 })), "C3");
-  assert.equal(placementTier(placementResults(89.9, { reviewed: 30 })), "D1");
+  assert.equal(placementTier(placementResults(89.9, { reviewed: 30 })), "C3", "quality correction cannot bypass the raw-point C2 requirement");
 });
 
 test("decision quality is weighted across the three matches rather than averaging match averages", () => {
@@ -126,12 +126,55 @@ test("decision quality is weighted across the three matches rather than averagin
   assert.equal(placementTier(results), "C2");
 });
 
-test("other initial grades follow total-point thresholds without a later tier adjustment", () => {
+test("missing or neutral-quality reviews preserve the raw-point grade thresholds", () => {
   for (const [points, tier] of [[90, "C3"], [89.9, "D1"], [30, "D1"], [29.9, "D2"], [-30, "D2"], [-30.1, "D3"], [-90, "D3"], [-90.1, "E1"]]) {
     assert.equal(placementTier(placementResults(points)), tier);
-    if (points < 90) assert.equal(placementTier(placementResults(points, { reviewed: 30 })), tier);
-    assert.equal(placementTier(placementResults(points, { reviewed: 30, quality: 0, major: 30 })), tier);
+    assert.equal(placementTier(placementResults(points, { reviewed: 60, quality: 80 })), tier);
+    assert.equal(placementTier(placementResults(points, { reviewed: 60, quality: 80, major: 12 })), tier, "major mistakes are not deducted twice");
   }
+});
+
+test("pooled decision quality changes initial grades with a bounded hidden-point correction", () => {
+  for (const [points, quality, tier] of [
+    [0, 100, "D1"], [0, 90, "D2"], [0, 80, "D2"], [0, 70, "D2"],
+    [0, 60, "D3"], [0, 0, "D3"], [20, 90, "D1"], [-20, 70, "D3"],
+    [50, 100, "C3"], [119.9, 60, "D1"],
+  ]) {
+    assert.equal(placementTier(placementResults(points, { reviewed: 60, quality })), tier,
+      `raw ${points}, quality ${quality}`);
+  }
+});
+
+test("quality corrections shrink with sample size and reach full weight at 60 reviews", () => {
+  assert.equal(placementTier(placementResults(0, { reviewed: 30 })), "D2"); // +20
+  assert.equal(placementTier(placementResults(0, { reviewed: 45 })), "D1"); // +30
+  assert.equal(placementTier(placementResults(-10, { reviewed: 59 })), "D2");
+  assert.equal(placementTier(placementResults(-10, { reviewed: 60 })), "D1");
+  assert.equal(placementTier(placementResults(-10, { reviewed: 600 })), "D1", "more samples cannot exceed +40");
+  assert.equal(placementTier(placementResults(0, { reviewed: 30, quality: 60 })), "D2"); // -20
+  assert.equal(placementTier(placementResults(0, { reviewed: 60, quality: 60 })), "D3"); // -40
+  assert.equal(placementTier(placementResults(-50, { reviewed: 600, quality: 0, major: 600 })), "D3", "correction is capped at -40");
+});
+
+test("hidden-point thresholds retain inclusive boundaries without promoting to C2", () => {
+  for (const [points, tier] of [
+    [-130.1, "E1"], [-130, "D3"], [-70.1, "D3"], [-70, "D2"],
+    [-10.1, "D2"], [-10, "D1"], [49.9, "D1"], [50, "C3"],
+  ]) assert.equal(placementTier(placementResults(points, { reviewed: 60 })), tier);
+  assert.equal(placementTier(placementResults(89.9, { reviewed: 60 })), "C3");
+  assert.equal(placementTier(placementResults(90, { reviewed: 60, quality: 90, major: 7 })), "C3", "positive quality correction cannot bypass the C2 mistake-rate condition");
+  assert.equal(placementTier(placementResults(120, { reviewed: 60, quality: 0, major: 60 })), "C2", "the raw 120-point route remains independent");
+});
+
+test("quality correction pools decisions across matches instead of averaging match averages", () => {
+  const results = placementResults(0);
+  Object.assign(results[0].analysis, { eligible: 6, reviewed: 6, qualityTotal: 600 });
+  Object.assign(results[1].analysis, { eligible: 54, reviewed: 54, qualityTotal: 3240 });
+  assert.equal(placementTier(results), "D3"); // Q = 64, correction = -32.
+  const partial = placementResults(28, { reviewed: 14, quality: 1180 / 14 });
+  assert.equal(placementTier(partial), "D1", "pooling before division preserves an exact +2 boundary");
+  partial[0].analysis.qualityTotal -= 1;
+  assert.equal(placementTier(partial), "D2", "the internal adjusted total is not rounded up to a displayed point precision");
 });
 
 test("near-equivalent alternatives receive placement credit despite low exact agreement", () => {
@@ -140,7 +183,7 @@ test("near-equivalent alternatives receive placement credit despite low exact ag
   } }));
   assert.equal(placementTier(results), "C2");
   for (const result of results) { result.analysis.qualityTotal = 800; result.analysis.majorMistakes = 10; }
-  assert.equal(placementTier(results), "C3");
+  assert.equal(placementTier(results), "D1");
 });
 
 test("career slots isolate games, track decisions and retain a finished checkpoint", () => {

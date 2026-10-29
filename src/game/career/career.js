@@ -83,7 +83,14 @@ export function placementTier(results) {
   // alternatives. Exact agreement alone is not a quality estimate.
   if (points >= 90 && reviewed >= PLACEMENT_MIN_REVIEWS &&
       quality > 80 * reviewed && major * 10 <= reviewed) return "C2";
-  return points >= 90 ? "C3" : points >= 30 ? "D1" : points >= -30 ? "D2" : points >= -90 ? "D3" : "E1";
+  // Internal placement-only correction:
+  // clamp(2 * (meanQuality - 80), -40, 40) * min(1, reviewed / 60).
+  // Keep the pooled sums intact to avoid rounding a small sample's average.
+  // Zero reviews naturally contribute zero; mistakes already reduce quality.
+  const qualityOffset = quality - 80 * reviewed;
+  const boundedOffset = Math.max(-20 * reviewed, Math.min(20 * reviewed, qualityOffset));
+  const adjustedPoints = points + 2 * boundedOffset / Math.max(60, reviewed);
+  return adjustedPoints >= 90 ? "C3" : adjustedPoints >= 30 ? "D1" : adjustedPoints >= -30 ? "D2" : adjustedPoints >= -90 ? "D3" : "E1";
 }
 
 // Old saves can reveal their initial grade once, unless league play has already begun.
