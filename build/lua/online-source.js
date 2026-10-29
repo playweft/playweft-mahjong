@@ -437,6 +437,27 @@ end
 
 local __mahjong_online_action = on_action
 function on_action(state, action, context)
+  if action and action.type == "return_to_lobby" then
+    local actor = context and context.actor
+    if not actor or actor.isOwner ~= true or actor.id ~= state.roomOwnerId then
+      return rejected("return_to_lobby_owner_only")
+    end
+    if state.phase == "lobby" then return rejected("match_not_started") end
+    local lobby = {
+      phase = "lobby",
+      players = state.players,
+      playerNames = state.playerNames,
+      aiPlayers = state.aiPlayers,
+      lobbySeed = next_match_seed(state.seed),
+      roomOwnerId = state.roomOwnerId,
+      aiPresentations = {},
+      playerPresentations = state.playerPresentations or {},
+      autoPassClaims = {},
+    }
+    local result = accepted(lobby, { { type = "returned_to_lobby", player = actor.id } })
+    result.timerOps = __mahjong_timer_ops(lobby, context)
+    return result
+  end
   if action and action.type == "set_player_presentation" then
     local actor_id = context and context.actor and context.actor.id
     if not actor_id or not __mahjong_is_room_player(state, actor_id) then

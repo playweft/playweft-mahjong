@@ -202,6 +202,51 @@ test("Mahjong rooms stay in a private game lobby until the owner starts the sele
   });
 });
 
+test("only the room owner can return the whole table to a clean lobby and start a fresh match", async () => {
+  const result = await runOnlineMock(`
+    local started = setup({ players = ${PLAYERS}, serverTime = 1000,
+      match = { ownerId = "p1", randomSeed = "0000000000000000000000000000002a" } })
+    local state = started.state
+    state.playerPresentations.p2 = { displayName = "Guest" }
+    state.autoPassClaims.p2 = true
+    local rejected_guest = on_action(state, { type = "return_to_lobby" }, {
+      actor = { id = "p2", isOwner = false } })
+    local rejected_spoof = on_action(state, { type = "return_to_lobby" }, {
+      actor = { id = "p2", isOwner = true } })
+    local rejected_flag = on_action(state, { type = "return_to_lobby" }, {
+      actor = { id = "p1", isOwner = false } })
+    local lobby = on_action(state, { type = "return_to_lobby" }, {
+      serverTime = 1100, actor = { id = "p1", isOwner = true } })
+    local repeated = on_action(lobby.state, { type = "return_to_lobby" }, {
+      actor = { id = "p1", isOwner = true } })
+    local host = view(lobby.state, lobby.events, { viewer = { id = "p1", isOwner = true } })
+    local guest = view(lobby.state, lobby.events, { viewer = { id = "p2", isOwner = false } })
+    local restarted = on_action(lobby.state, { type = "start_match", matchType = "hanchan" }, {
+      serverTime = 1200, actor = { id = "p1", isOwner = true } })
+    local stale_timer = on_timer(lobby.state, { id = "mahjong-turn", payload = {} }, { firedAt = 2000 })
+    result = {
+      guest_rejected = rejected_guest.accepted == false,
+      spoof_rejected = rejected_spoof.accepted == false,
+      flag_rejected = rejected_flag.accepted == false,
+      original_unchanged = state.phase == "playing" and state.hands ~= nil,
+      accepted = lobby.accepted == true and lobby.state.phase == "lobby",
+      private_state_cleared = lobby.state.hands == nil and lobby.state.wall == nil and lobby.state.paipu == nil,
+      players_kept = #lobby.state.players == 4 and lobby.state.roomOwnerId == "p1",
+      presentations_kept = lobby.state.playerPresentations.p2.displayName == "Guest",
+      auto_pass_cleared = next(lobby.state.autoPassClaims) == nil,
+      timers_cancelled = #lobby.timerOps == 2 and lobby.timerOps[1].op == "cancel" and lobby.timerOps[2].op == "cancel",
+      host_lobby = host.state.phase == "lobby" and host.state.roomIsOwner == true,
+      guest_lobby = guest.state.phase == "lobby" and guest.state.roomIsOwner == false,
+      repeated_rejected = repeated.accepted == false,
+      restarted = restarted.accepted == true and restarted.state.phase == "playing" and restarted.state.matchType == "hanchan",
+      new_seed = restarted.state.seed ~= state.seed,
+      new_wall = restarted.state.paipu.hands[1].wall ~= state.paipu.hands[1].wall,
+      stale_timer_safe = stale_timer.state.phase == "lobby",
+    }
+  `);
+  for (const [check, passed] of Object.entries(result)) assert.equal(passed, true, check);
+});
+
 test("Mahjong room start shuffles humans and AI into deterministic fixed seats", async () => {
   const result = await runOnlineMock(`
     local function start(seed)

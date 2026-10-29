@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CAREER_KEYS, CAREER_TIERS, createCareer, parseCareer, settleCareer, placementTier, careerSummary, hasPendingPlacementResult } from "../src/game/career/career.js";
+import { CAREER_KEYS, CAREER_TIERS, createCareer, parseCareer, settleCareer, placementTier, careerSummary, hasPendingPlacementResult, leagueThresholds } from "../src/game/career/career.js";
 import { createCareerStore } from "../src/storage/career-store.js";
 import { createMahjongSoloSave } from "../src/game/replay/solo-save.js";
 import { evaluateCareerDiscard } from "../src/game/career/evaluate-discard.js";
@@ -79,6 +79,62 @@ test("E1 and A1 bound the ladder, neutral total retains tier", () => {
   }
   assert.equal(CAREER_TIERS[0], "E1");
   assert.equal(CAREER_TIERS.at(-1), "A1");
+});
+
+const leagueLines = [
+  ["E1", 60, null], ["D3", 65, -95], ["D2", 70, -90],
+  ["D1", 75, -85], ["C3", 80, -80], ["C2", 85, -75],
+  ["C1", 90, -70], ["B2", 95, -65], ["B1", 100, -60],
+  ["A2", 105, -55], ["A1", null, -50],
+];
+
+function leagueAtTotal(tier, total) {
+  let career = { ...ranked(), tier, highestTier: tier };
+  const perMatch = Math.round(total / 8 * 10) / 10;
+  let accumulated = 0;
+  for (let index = 0; index < 8; index++) {
+    const points = index === 7 ? Math.round((total - accumulated) * 10) / 10 : perMatch;
+    // Use real, zero-sum score sheets: second place for positive points,
+    // third place for negative points, throughout these threshold cases.
+    const score = (points >= 0 ? 15000 : 35000) + points * 1000;
+    const scores = points >= 0 ? [score, 50000, (50000 - score) / 2, (50000 - score) / 2] :
+      [score, (100000 - score) / 2, (100000 - score) / 2, 0];
+    career = completed(career, `threshold-${tier}-${total}-${index}`, scores);
+    accumulated += points;
+  }
+  assert.equal(career.lastSettlement.total, total);
+  return career;
+}
+
+test("each league tier uses the agreed five-point progression with bounded ladder ends", () => {
+  assert.deepEqual(leagueLines.map(([tier]) => tier), CAREER_TIERS);
+  for (const [tier, promotion, relegation] of leagueLines) {
+    assert.deepEqual(leagueThresholds(tier), { promotion, relegation });
+  }
+  assert.throws(() => leagueThresholds("S"), RangeError);
+});
+
+test("all tiers settle at inclusive promotion and relegation boundaries, retaining just inside", () => {
+  for (const [tier, promotion, relegation] of leagueLines) {
+    const index = CAREER_TIERS.indexOf(tier);
+    for (const [boundary, delta, outcome, nextIndex] of [
+      [promotion, 0, "promoted", index + 1],
+      [promotion, -0.1, "retained", index],
+      [relegation, 0, "relegated", index - 1],
+      [relegation, 0.1, "retained", index],
+    ]) {
+      if (boundary === null) continue;
+      const total = Math.round((boundary + delta) * 10) / 10;
+      const career = leagueAtTotal(tier, total);
+      assert.equal(career.lastSettlement.outcome, outcome, `${tier} at ${total}`);
+      assert.equal(career.tier, CAREER_TIERS[nextIndex]);
+      assert.equal(career.pendingLeagueResult.total, total);
+      assert.equal(career.pendingLeagueResult.previousTier, tier);
+      assert.equal(career.history.at(-1).points, total);
+      assert.deepEqual(career.period, { number: 2, results: [] });
+      assert.deepEqual(parseCareer(JSON.stringify(career)), career);
+    }
+  }
 });
 
 function placementResults(points, { reviewed = 0, quality = 100, major = 0, agreed = 0 } = {}) {

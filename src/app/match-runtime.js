@@ -268,6 +268,8 @@ export function createMahjongMatchRuntime({
     onEndMatch: () => {
       if (matchCoordinator.getMode() === "replay")
         void exitMahjongPaipuReplay();
+      else if (matchCoordinator.getMode() === "room")
+        void roomController?.returnToLobby();
       else void endSoloMatch();
     },
     onOfflinePolicyChange: (policy) =>
@@ -753,7 +755,7 @@ export function createMahjongMatchRuntime({
       const snapshot = await matchCoordinator.getGame().checkpoint();
       careerStore.persistMatch(soloSaveController.get(), snapshot.state);
       await storage.flush();
-      settingsDialog.setEndMatchLabel("保存并返回");
+      settingsDialog.setEndMatchLabel("暂时离开");
     },
     tableController,
     themeController,

@@ -9,6 +9,8 @@ export class SettingsDialog extends ViewComponent {
     tab: "operation",
     copyright: "",
     soloActive: false,
+    roomActive: false,
+    roomIsOwner: false,
     endLabel: "结束本局",
     values: {
       gameHints: true,
@@ -29,6 +31,8 @@ export class SettingsDialog extends ViewComponent {
       open,
       tab,
       soloActive,
+      roomActive,
+      roomIsOwner,
       endLabel,
       values,
       onClose,
@@ -438,10 +442,10 @@ export class SettingsDialog extends ViewComponent {
               id="settings-end-match-button"
               class="settings-dialog-end-match"
               type="button"
-              hidden={!soloActive}
+              hidden={!soloActive && !(roomActive && roomIsOwner)}
               onClick={onEndMatch}
             >
-              {endLabel}
+              {roomActive ? "返回大厅" : endLabel}
             </button>
             <button
               id="settings-return-button"
@@ -449,7 +453,7 @@ export class SettingsDialog extends ViewComponent {
               type="button"
               onClick={onClose}
             >
-              {soloActive ? "返回对局" : "返回大厅"}
+              {soloActive || roomActive ? "返回对局" : "返回大厅"}
             </button>
           </footer>
         </div>

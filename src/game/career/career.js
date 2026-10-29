@@ -7,10 +7,19 @@ export const PLACEMENT_MATCHES = 3;
 export const PLACEMENT_C2_POINTS = 120;
 export const PLACEMENT_MIN_REVIEWS = 30;
 export const LEAGUE_MATCHES = 8;
-export const PROMOTION_POINTS = 80;
-export const RELEGATION_POINTS = -80;
+export const LEAGUE_TIER_STEP = 5;
 export const CAREER_AI_VERSION = "discard-policy-v1";
 const round = (value) => Math.round(value * 10) / 10;
+
+export function leagueThresholds(tier) {
+  const index = CAREER_TIERS.indexOf(tier);
+  if (index < 0) throw new RangeError("无效的联赛等级");
+  const offset = (index - CAREER_TIERS.indexOf("C3")) * LEAGUE_TIER_STEP;
+  return {
+    promotion: index === CAREER_TIERS.length - 1 ? null : 80 + offset,
+    relegation: index === 0 ? null : -80 + offset,
+  };
+}
 
 export function createCareer({ id = crypto.randomUUID(), now = Date.now() } = {}) {
   return {
@@ -137,7 +146,9 @@ export function settleCareer(career, state, humanId = HUMAN_ID, now = Date.now()
     total = round(next.period.results.reduce((sum, entry) => sum + entry.points, 0));
     if (next.period.results.length === LEAGUE_MATCHES) {
       const index = CAREER_TIERS.indexOf(next.tier);
-      const direction = total >= PROMOTION_POINTS ? 1 : total <= RELEGATION_POINTS ? -1 : 0;
+      const { promotion, relegation } = leagueThresholds(next.tier);
+      const direction = promotion !== null && total >= promotion ? 1 :
+        relegation !== null && total <= relegation ? -1 : 0;
       const nextIndex = Math.max(0, Math.min(CAREER_TIERS.length - 1, index + direction));
       next.tier = CAREER_TIERS[nextIndex];
       outcome = nextIndex > index ? "promoted" : nextIndex < index ? "relegated" : "retained";

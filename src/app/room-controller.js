@@ -53,6 +53,8 @@ export function createMahjongRoomController({
   startSoloEntry,
 } = {}) {
   let roomIsOwner = false;
+  let returningToLobby = false;
+  let roomStateGeneration = 0;
   let roomLobbyAiPlayerIds = [];
   let roomAiGame;
   let roomAiPlayerIds = "";
@@ -118,7 +120,7 @@ export function createMahjongRoomController({
     });
     syncPlayerPresentation({ force: true });
     if (isRoom()) {
-      settingsDialog?.setSoloMatchActive(false);
+      settingsDialog?.setRoomMatchActive(false, roomIsOwner);
       showRoomWaiting();
       return;
     }
@@ -151,6 +153,7 @@ export function createMahjongRoomController({
 
   async function handleState(message) {
     if (!isRoom()) return;
+    const generation = ++roomStateGeneration;
     setPlayerId?.(message?.playerId || getPlayerId?.() || "");
     roomIsOwner = message?.state?.roomIsOwner === true;
     setIsOwner?.(roomIsOwner);
@@ -168,6 +171,7 @@ export function createMahjongRoomController({
       message?.viewer?.role || message?.role || "",
     );
     if (!projection?.state) return;
+    settingsDialog?.setRoomMatchActive(projection.state.phase !== "lobby", roomIsOwner);
     const spectator = projection.viewer?.role === "spectator";
     roomLobbyAiPlayerIds = Object.keys(projection.state.aiPlayers || {});
     roomPlayerProfiles?.request(projection.state);
@@ -196,6 +200,20 @@ export function createMahjongRoomController({
         version: message?.version,
         matchId: message?.matchId,
       });
+      scheduleRoomAi(projection.state);
+      roomSelfAnalysis.clear();
+      roomTenpaiRequest += 1;
+      roomTenpaiRequestedKey = "";
+      roomTenpaiReports = undefined;
+      roomTenpaiReportsPromise = undefined;
+      roomTenpaiSupplementRequest += 1;
+      roomTenpaiSupplementRequestedKey = "";
+      roomTenpaiReportedKey = "";
+      resetAutoActions?.({ persist: false });
+      settingsDialog?.setOpen(false, { restoreFocus: false, animate: false });
+      tableController.syncMatchMusic({ enabled: false });
+      tableController.reset();
+      elements.result.hidden = true;
       setGameInitializing?.(false);
       elements.app.setAttribute("aria-busy", "false");
       if (projection.state.roomIsOwner) showRoomSetupCallback?.();
@@ -213,13 +231,15 @@ export function createMahjongRoomController({
       );
     try {
       await visualRendererReady;
-      if (getDestroyed?.() || !isRoom()) return;
+      if (getDestroyed?.() || !isRoom() || generation !== roomStateGeneration) return;
       const presentationApplied = roomPlayerPresentations?.apply(projection.state, {
         viewerSeat: Number(projection.viewer?.seat) || 1,
       });
       await tableController.refresh(projection, { animateDealIn });
+      if (getDestroyed?.() || !isRoom() || generation !== roomStateGeneration) return;
       scheduleRoomAi(projection.state);
       await presentationApplied;
+      if (getDestroyed?.() || !isRoom() || generation !== roomStateGeneration) return;
       persistCompletedRoomPaipu(
         message?.state?.paipu,
         message?.matchId,
@@ -646,6 +666,27 @@ export function createMahjongRoomController({
     );
   }
 
+  async function returnToLobby() {
+    if (!isRoom() || !roomIsOwner || returningToLobby || getGameInitializing?.() ||
+        !tableController.getState() || getSession?.()?.isActionInFlight()) return false;
+    returningToLobby = true;
+    try {
+      const confirmed = await getClient?.()?.confirm(
+        "结束当前对局并返回大厅？所有玩家将返回等待开局状态。",
+      );
+      if (!confirmed || getDestroyed?.() || !isRoom() || !roomIsOwner ||
+          !tableController.getState()) return false;
+      const submitted = await getSession?.()?.dispatch({ type: "return_to_lobby" });
+      if (submitted) settingsDialog?.setOpen(false, { restoreFocus: false, animate: false });
+      return Boolean(submitted);
+    } catch (error) {
+      showMessage?.(`返回大厅失败：${error.message || "请稍后重试"}`);
+      return false;
+    } finally {
+      returningToLobby = false;
+    }
+  }
+
   async function startMatch(matchType = "east") {
     if (!isRoom() || !roomIsOwner || getGameInitializing?.()) return;
     setGameInitializing?.(true);
@@ -673,6 +714,7 @@ export function createMahjongRoomController({
   }
 
   function destroy() {
+    roomStateGeneration += 1;
     cancelRoomAiWait();
     roomAiGame?.close();
     roomAiGame = undefined;
@@ -698,6 +740,7 @@ export function createMahjongRoomController({
     sendActionWithTenpaiReport,
     scheduleAutomaticAction,
     startMatch,
+    returnToLobby,
     syncPlayerPresentation,
     showRoomWaiting,
     getPlayerId: () => getPlayerId?.() || "",

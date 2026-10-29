@@ -155,8 +155,9 @@ export class Lobby extends ViewComponent {
                   <p class="career-rules">
                     定段：3 场南风战，战绩为主、决策质量为辅。
                     <br />
-                    联赛：每期 8 场，累计 ≥ +80 pt 升级，≤ −80 pt
-                    降级，其余保级。
+                    联赛：每期 8 场。C3 升级线 +80 pt，降级线 −80 pt；
+                    每升一级，两条分线均提高 5 pt。累计成绩达到对应分线升降级，
+                    其余保级。E1 不降级，A1 不升级。
                     <br />
                     E1 → D3 → D2 → D1 → C3 → C2 → C1 → B2 → B1 → A2 → A1
                   </p>

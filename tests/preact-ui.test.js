@@ -177,6 +177,45 @@ test("settings tabs, persisted toggles, sliders and focus are driven by the comp
   assert.equal(document.activeElement, trigger);
 });
 
+test("room settings expose lobby return only to the current host and keep resume separate", (t) => {
+  const { document } = fixture(t);
+  const root = document.querySelector("#settings-dialog");
+  let exits = 0;
+  const settings = createMahjongSettingsDialog({
+    trigger: document.querySelector("#settings-button"), root,
+    surface: root.querySelector(".settings-dialog-card"),
+    tabButtons: [...root.querySelectorAll("[data-settings-tab]")],
+    onEndMatch: () => exits++,
+  });
+  t.after(() => settings.destroy());
+  const exit = document.querySelector("#settings-end-match-button");
+  const resume = document.querySelector("#settings-return-button");
+  settings.setRoomMatchActive(true, false);
+  settings.setOpen(true);
+  assert.equal(exit.hidden, true);
+  assert.equal(resume.textContent, "返回对局");
+  resume.click();
+  assert.equal(root.hidden, true);
+  assert.equal(exits, 0);
+  settings.setRoomMatchActive(true, true);
+  settings.setOpen(true);
+  assert.equal(exit.hidden, false);
+  assert.equal(exit.textContent, "返回大厅");
+  assert.equal(resume.textContent, "返回对局");
+  exit.click();
+  assert.equal(exits, 1);
+  settings.setRoomMatchActive(true, false);
+  assert.equal(exit.hidden, true, "losing ownership updates an already open dialog");
+  settings.setRoomMatchActive(false, true);
+  assert.equal(exit.hidden, true);
+  assert.equal(resume.textContent, "返回大厅");
+  settings.setSoloMatchActive(true);
+  settings.setEndMatchLabel("暂时离开");
+  assert.equal(exit.hidden, false);
+  assert.equal(exit.textContent, "暂时离开");
+  assert.equal(resume.textContent, "返回对局");
+});
+
 test("a match summary renders rows while portrait loads cannot replace a newer selection", (t) => {
   const { document, window } = fixture(t);
   const dom = new MahjongDomView({});

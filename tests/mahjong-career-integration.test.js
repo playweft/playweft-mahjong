@@ -76,6 +76,10 @@ test("lobby navigation keeps training lengths in the submenu and exposes three c
   await window.happyDOM.whenAsyncComplete();
   assert.deepEqual(starts, [2]);
   assert.match(document.querySelector('[data-lobby-page="career"] h2').textContent, /立志戦/);
+  const rules = document.querySelector(".career-rules").textContent;
+  assert.match(rules, /C3 升级线 \+80 pt，降级线 −80 pt/);
+  assert.match(rules, /每升一级，两条分线均提高 5 pt/);
+  assert.match(rules, /E1 不降级，A1 不升级/);
   menu.destroy();
   await window.happyDOM.close();
 });

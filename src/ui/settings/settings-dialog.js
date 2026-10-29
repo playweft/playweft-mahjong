@@ -234,7 +234,10 @@ export function createMahjongSettingsDialog({
       return view.state.values.avatar;
     },
     setSoloMatchActive(soloActive) {
-      view.update({ soloActive });
+      view.update({ soloActive, roomActive: false, roomIsOwner: false });
+    },
+    setRoomMatchActive(roomActive, roomIsOwner = false) {
+      view.update({ soloActive: false, roomActive, roomIsOwner });
     },
     setEndMatchLabel(endLabel) {
       view.update({ endLabel });

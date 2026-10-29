@@ -77,6 +77,15 @@ overlaps the recognition interval; completed passes need no presentation delay.
 Room AI uses this same pacing, while its server-authorized per-actor contexts
 and action transport remain separate from solo authority.
 
+Room settings use the server-projected `roomIsOwner`: the host sees “返回大厅”
+and “返回对局”; other players and spectators see only “返回对局”. After confirmation,
+the host's `return_to_lobby` action resets the entire table to the game's opening
+lobby without leaving or dissolving the platform room. The Lua entry validates
+ownership, cancels turn/result timers, clears the interrupted match and private
+hands, and keeps room members and their presentation preferences. Clients cancel
+old AI/analysis work, clear the table and results, then show host setup or guest
+waiting. Starting again uses a fresh deterministic seed.
+
 The bridge contract is documented in the platform's
 [integration guide](https://github.com/playweft/playweft/blob/main/docs/game-integration/README.md).
 
@@ -155,9 +164,14 @@ Version 1 progression is deliberately game-specific, not the official league
 rulebook: three hanchan placement matches, then eight hanchan per period across
 E1, D3, D2, D1, C3, C2, C1, B2, B1, A2, A1. Match points are
 `(final score - 25000) / 1000 + [30, 10, -10, -30][rank - 1]`; raw canonical
-opening-seat order breaks tied scores consistently with replay export. Period
+opening-seat order breaks tied scores consistently with replay export. C3 period
 scores of at least +80 promote one tier, at most -80 relegate one, and otherwise
-retain the tier. E1 and A1 are boundaries. Progression constants and placement
+retain the tier. Each tier above C3 raises both thresholds by 5 points; each
+tier below lowers both by 5. E1 promotes at +60 and cannot relegate; A1 relegates
+at -50 and cannot promote. A2 promotes at +105 and relegates at -55.
+Thresholds apply to raw eight-match totals when the period ends, including
+periods already in progress. Previously settled results are not recalculated.
+Progression constants, `leagueThresholds` and placement
 thresholds are in `src/game/career/career.js`; opponents currently use the
 existing local AI policy at every tier.
 
@@ -191,7 +205,7 @@ These scores are heuristic policy comparisons, not expected-point loss or Elo.
 Final settlement and the resumable match are written together, deduplicated by
 match ID. Starting the next match allocates a fresh seed and ID. Restoring a
 finished but unsettled checkpoint repairs its settlement; restoring an already
-settled result never counts the match twice. Settings offers “保存并返回” during
+settled result never counts the match twice. Settings offers “暂时离开” during
 career play. Invalid slot records block startup and preserve the original data.
 
 
