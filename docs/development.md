@@ -191,7 +191,16 @@ Saved, completed placements are not recalculated. Placement is bounded to
 E1–C2. These are provisional game-balance thresholds, not calibrated human-rank
 estimates.
 
-The match worker optionally reviews a manual career discard before applying it.
+For a manual career discard, the match worker captures the pre-action snapshot,
+applies the action and returns its projection without running policy evaluation.
+The client lazily creates a separate review Worker/engine, so neither the discard
+animation nor the authoritative worker's next AI/claim request waits for review.
+The session presents these accepted discards before persistence, including a
+match-ending discard. The journal is saved immediately; late evaluations update
+the latest journal only while the originating match/save generation is active.
+Settlement waits for outstanding reviews before computing the grade, and
+“暂时离开” drains them before closing the worker and flushing storage. Worker
+failure or review timeout counts as unavailable rather than an incorrect choice.
 Lua compares the same candidate set under one push/fold mode and returns score,
 shanten, acceptance, value and risk differences. JS uses
 `100 * (1 - clamp((scoreLoss - 14) / scale, 0, 1))`, rounded to an integer, with

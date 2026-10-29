@@ -174,29 +174,40 @@ export function createMahjongSessionController({
         return false;
       }
       reschedule = true;
-      await persistAcceptedAction?.(
-        action,
-        humanId,
-        outcome.projection,
-        currentGame,
-        outcome.careerAnalysis,
-      );
-      onSoloActionAccepted?.(action, outcome.projection);
-      if (onAcceptedProjection) {
-        try {
-          await onAcceptedProjection(outcome.projection, currentGame);
-        } catch (error) {
-          onProjectionTransitionError?.(error);
-          await refreshProjection?.(outcome.projection);
+      const presentAcceptedAction = async () => {
+        onSoloActionAccepted?.(action, outcome.projection);
+        if (onAcceptedProjection) {
+          try {
+            await onAcceptedProjection(outcome.projection, currentGame);
+          } catch (error) {
+            onProjectionTransitionError?.(error);
+            await refreshProjection?.(outcome.projection);
+          }
+        } else {
+          await refreshProjection?.(outcome.projection, {
+            ownDiscardedTile:
+              action.type === "discard" || action.type === "riichi"
+                ? Number(action.tileId) || 0
+                : 0,
+          });
         }
-      } else {
-        await refreshProjection?.(outcome.projection, {
-          ownDiscardedTile:
-            action.type === "discard" || action.type === "riichi"
-              ? Number(action.tileId) || 0
-              : 0,
-        });
+      };
+      const backgroundReview = typeof outcome.careerAnalysis?.then === "function";
+      // Even a match-ending discard must appear before settlement waits for
+      // outstanding reviews. Normal discards save without awaiting them.
+      let feedbackError;
+      if (backgroundReview) {
+        try {
+          await presentAcceptedAction();
+        } catch (error) {
+          feedbackError = error;
+        }
       }
+      await persistAcceptedAction?.(
+        action, humanId, outcome.projection, currentGame, outcome.careerAnalysis,
+      );
+      if (feedbackError) throw feedbackError;
+      if (!backgroundReview) await presentAcceptedAction();
       return true;
     } catch (error) {
       if (sameCurrentGame(currentGame)) onActionError?.(error);

@@ -879,6 +879,8 @@ export function createMahjongMatchRuntime({
     try {
       if (careerStore?.activeSlot) {
         if (session?.isActionInFlight()) return;
+        session?.cancelScheduledActions();
+        await soloSaveController.flushEvaluations();
         await storage.flush();
         settingsDialog.setOpen(false, { restoreFocus: false, animate: false });
         await teardownCompletedSoloMatch({ preserveCareerMatch: true });
@@ -970,7 +972,8 @@ export function createMahjongMatchRuntime({
     matchCoordinator.getGame()?.close();
     roomController?.destroy();
     // Keep the transferred port alive until pending snapshots are acknowledged.
-    void storage.flush()
+    void soloSaveController.flushEvaluations()
+      .then(() => storage.flush())
       .catch(() => {})
       .finally(() => playweftClient?.destroy());
   }

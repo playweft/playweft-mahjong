@@ -98,6 +98,30 @@ test("mahjong session commits an accepted action before resuming AI work", async
   assert.equal(controller.isActionInFlight(), false);
 });
 
+test("career discard feedback is rendered before persistence waits for a background review", async () => {
+  let resolveReview;
+  const careerAnalysis = new Promise((resolve) => { resolveReview = resolve; });
+  const order = [];
+  const state = { phase: "playing", turnIndex: 1 };
+  const game = { action: async () => ({ result: { accepted: true },
+    projection: { state: { phase: "hand_ended", matchEnded: true }, events: [] }, careerAnalysis }) };
+  const { controller } = createController({ state, game, callbacks: {
+    onSoloActionAccepted: () => order.push("state-reset"),
+    refreshProjection: async () => order.push("rendered"),
+    persistAcceptedAction: async (_action, _actor, _projection, _game, evaluation) => {
+      assert.equal(evaluation, careerAnalysis);
+      await evaluation;
+      order.push("saved");
+    },
+  } });
+  const pending = controller.dispatch({ type: "discard", tileId: 1 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ["state-reset", "rendered"]);
+  resolveReview({ eligible: true });
+  assert.equal(await pending, true);
+  assert.deepEqual(order, ["state-reset", "rendered", "saved"]);
+});
+
 test("solo claim planning does not lock player input; an early intent waits without mutating the game", async () => {
   let planned = 0, acted = 0;
   const game = {

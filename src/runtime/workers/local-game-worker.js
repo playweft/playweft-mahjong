@@ -48,13 +48,24 @@ async function handle(type, payload) {
     };
   }
   if (type === "replayActions") return replayActions(payload);
+  if (type === "reviewCareerDiscard") {
+    return evaluateCareerDiscard(game, payload.action, payload.actorId, payload.state);
+  }
   if (type === "action") {
-    const careerAnalysis = payload.actionOptions?.evaluateCareer
-      ? evaluateCareerDiscard(game, payload.action, payload.actorId) : null;
+    let careerReviewState;
+    let careerAnalysis = null;
+    if (payload.actionOptions?.evaluateCareer && ["discard", "riichi"].includes(payload.action?.type)) {
+      try {
+        careerReviewState = game.checkpoint().state;
+      } catch {
+        careerAnalysis = { unavailable: true };
+      }
+    }
     const result = game.action(payload.action, payload.actorId);
     return {
       result,
       careerAnalysis: result?.accepted ? careerAnalysis : null,
+      careerReviewState: result?.accepted ? careerReviewState : undefined,
       projection: result?.accepted ? game.view(payload.viewerId) : null,
     };
   }

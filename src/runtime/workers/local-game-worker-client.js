@@ -17,6 +17,7 @@ export async function createLocalLuaGame(options = {}) {
   let closed = false;
   let requestId = 0;
   let queue = Promise.resolve();
+  let careerReviewer;
   // Canonical-seat games keep the rules runtime in opening East/South/West/
   // North order. Only projections crossing into the UI are rotated so the
   // active viewer occupies presentation seat 1 (bottom).
@@ -128,7 +129,7 @@ export async function createLocalLuaGame(options = {}) {
         ),
       },
       viewerId: options.playerId,
-    });
+    }, { timeoutMs: Number(options.initializationTimeoutMs) || 0 });
     return {
       matchId: initialized.matchId,
       playerId: options.playerId,
@@ -166,9 +167,25 @@ export async function createLocalLuaGame(options = {}) {
         }).then((response) => projectResponse(response, viewerId));
       },
       action(action, actorId = options.playerId, viewerId = options.playerId, actionOptions) {
-        return request("action", { action, actorId, viewerId, actionOptions }).then((response) =>
-          projectResponse(response, viewerId),
-        );
+        return request("action", { action, actorId, viewerId, actionOptions }).then((response) => {
+          const { careerReviewState, ...outcome } = response;
+          if (outcome.result?.accepted && careerReviewState) {
+            // A separate engine keeps policy work out of both the action
+            // response and the authoritative worker's next claim/AI request.
+            careerReviewer ??= createLocalLuaGame({
+              ...options, sourceUrl, buildVersion, resourcePolicy, resourceMode,
+              initializationTimeoutMs: 10000,
+            });
+            outcome.careerAnalysis = careerReviewer.then((reviewer) => {
+              if (closed) return { unavailable: true };
+              return reviewer.reviewCareerDiscard(careerReviewState, action, actorId);
+            }).catch(() => ({ unavailable: true }));
+          }
+          return projectResponse(outcome, viewerId);
+        });
+      },
+      reviewCareerDiscard(state, action, actorId) {
+        return request("reviewCareerDiscard", { state, action, actorId }, { timeoutMs: 10000 });
       },
       aiTurn(viewerId = options.playerId) {
         return request("aiTurn", { viewerId }).then((response) =>
@@ -226,6 +243,7 @@ export async function createLocalLuaGame(options = {}) {
         closed = true;
         rejectPending(new Error("The local Lua game is closed"));
         worker.terminate();
+        void careerReviewer?.then((reviewer) => reviewer.close()).catch(() => {});
       },
     };
   } catch (error) {
