@@ -60,7 +60,7 @@ export function createMahjongSoloClaimController({
     return round;
   }
 
-  function respond(action) {
+  function respond(action, actionOptions) {
     const round = ensure();
     if (!round || round.failed || round.intent || round.committing) return Promise.resolve(false);
     const claims = getState()?.legalActions?.claims;
@@ -69,7 +69,7 @@ export function createMahjongSoloClaimController({
     if (!options.length || (action.type !== "pass" && !selected)) return Promise.resolve(false);
     return new Promise((resolve) => {
       round.intent = {
-        actorId: humanId, action, resolve,
+        actorId: humanId, action, actionOptions, resolve,
       };
       flush(round);
     });
@@ -100,23 +100,36 @@ export function createMahjongSoloClaimController({
     );
     round.pendingAi = [];
     let projection;
+    let presentedProjection;
     let humanAccepted = false;
     try {
       for (const response of responses) {
         if (!owns(round)) break;
-        const outcome = await round.game.claimResponse(response.action, response.actorId, round.version, humanId);
+        const outcome = await round.game.claimResponse(response.action, response.actorId, round.version, humanId,
+          response === intent ? intent.actionOptions : undefined);
         if (getGame() !== round.game) return;
         if (!outcome?.result?.accepted && !outcome?.result?.skipped)
           throw new Error(`Mahjong claim response rejected: ${outcome?.result?.error?.code ?? "unknown"}`);
         round.version = outcome.result.version;
         projection = outcome.projection;
         if (!outcome.result.accepted) continue;
-        await persistAcceptedAction?.(response.action, response.actorId, projection, round.game);
+        let feedbackError;
+        if (response === intent && typeof outcome.careerAnalysis?.then === "function" && projection?.state?.matchEnded) {
+          try {
+            onHumanAccepted?.(intent.action, projection);
+            await refreshProjection?.(projection);
+            presentedProjection = projection;
+          } catch (error) {
+            feedbackError = error;
+          }
+        }
+        await persistAcceptedAction?.(response.action, response.actorId, projection, round.game, outcome.careerAnalysis);
+        if (feedbackError) throw feedbackError;
         if (response === intent) humanAccepted = true;
       }
       if (intent && round.intent === intent) round.intent = null;
-      if (humanAccepted) onHumanAccepted?.(intent.action, projection);
-      if (projection && getGame() === round.game) await refreshProjection?.(projection);
+      if (humanAccepted && projection !== presentedProjection) onHumanAccepted?.(intent.action, projection);
+      if (projection && projection !== presentedProjection && getGame() === round.game) await refreshProjection?.(projection);
       intent?.resolve(owns(round));
     } catch (error) {
       intent?.resolve(false);

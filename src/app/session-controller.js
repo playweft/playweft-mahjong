@@ -124,7 +124,7 @@ export function createMahjongSessionController({
     if (getMode?.() === "solo" && getState?.()?.phase === "claiming" &&
       getGame?.()?.aiClaimDecisions && ["claim", "pass"].includes(action?.type)) {
       if (source === "manual") cancelScheduler();
-      return soloClaims.respond(action);
+      return soloClaims.respond(action, getSoloActionOptions?.({ action, source }));
     }
     if (soloClaims.isBusy()) return false;
     soloClaims.cancel();

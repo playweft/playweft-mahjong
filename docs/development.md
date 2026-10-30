@@ -177,8 +177,10 @@ existing local AI policy at every tier.
 
 Initial placement grants C2 when three-match points total at least +120,
 regardless of decision metrics, or when the total is at least +90 and at least
-30 reviewed manual discards have mean quality strictly >80 and a major-deviation
-rate <=10%. Quality and mistakes are pooled across all reviewed decisions.
+30 effective manual-decision samples have quality strictly >80 and the highest
+observed ability-specific major-error rate is <=10%. Evidence is pooled across
+the three matches, balancing efficiency, defense, value and placement. Existing
+records without evidence retain their original pooled quality and mistake rate.
 Otherwise placement uses an internal quality correction:
 `clamp(2 * (meanQuality - 80), -40, 40) * min(1, reviewed / 60)`.
 No reviewed decisions means zero correction. Add it to the three-match total
@@ -195,12 +197,15 @@ Evaluation runs only during the three placement matches; ranked league matches
 and training games do not request review or create a review Worker. The career
 store tracks the active phase without reparsing the slot on every input.
 
-For a manual placement discard, the match worker captures a compact pre-action snapshot,
+For a manual placement decision, the match worker captures a compact pre-action snapshot,
 applies the action and returns its projection without running policy evaluation.
 The snapshot contains the player's hand, public melds/discards, score and round
 context, exposed dora indicators and only the live wall's length (zero-filled).
 It omits opponents' hands, future tile identities, ura indicators, paipu and
 historical logs, and is assembled inside Lua before crossing the Worker bridge.
+Claim snapshots add only the viewer's pending call options and the public
+discard, never another player's pending options. Only accepted manual responses
+request evaluation; responses superseded by a higher-priority claim do not count.
 The client lazily creates a separate review Worker/engine, so neither the discard
 animation nor the authoritative worker's next AI/claim request waits for review.
 The session presents these accepted discards before persistence, including a
@@ -209,24 +214,58 @@ the latest journal only while the originating match/save generation is active.
 Settlement waits for outstanding reviews before computing the grade, and
 “暂时离开” drains them before closing the worker and flushing storage. Worker
 failure or review timeout counts as unavailable rather than an incorrect choice.
-One Lua candidate analysis supplies both the recommendation and its comparison
-with the selected action. Review completes the ukeire/wait analysis for every
+One Lua candidate analysis supplies the recommendation and public structural
+features for each legal action. Review completes ukeire/wait analysis for every
 minimum-shanten candidate, with no extra precision for the selected discard.
-Legal riichi and dama on the same tile are separate actions. Signed preference
-margins reuse the existing policy's wait, value, threat, dealer and placement
-conditions; nearby thresholds have smaller margins. Riichi margins are converted
-to the current push/mixed/fold score units, and every legal action uses the same
-maximum action-score baseline. Review returns total score loss, riichi loss,
-shanten, acceptance, value and risk differences. JS uses
-`100 * (1 - clamp((scoreLoss - 14) / scale, 0, 1))`, rounded to an integer, with
-scales 300/400/1050 for push/mixed/fold; a normalized loss >=0.4 is a major deviation.
-The 14-point tolerance prevents near-equivalent choices from counting as errors.
-Agreement compares action type, tile kind and red status, not interchangeable
-physical copies. Riichi availability respects closure, >=1000 points and at
-least four live-wall tiles.
-Forced post-riichi discards, automatic actions and non-discard decisions are not
-rated. Missing analysis is recorded separately rather than as a failed decision.
-These scores are heuristic policy comparisons, not expected-point loss or Elo.
+`decision-evidence.js` evaluates these features independently of the policy's
+total score gap. Efficiency considers shanten regression and material acceptance
+loss, allowing compensation in value, safety, shape, future safe reserves,
+special-hand progress and wait quality. Acceptance differences below four tiles
+or 15% are tolerated. Defense distinguishes genbutsu against every active threat
+from weighted danger estimates; only weak attacks with a confirmed opposing
+riichi and a safe alternative can receive high-confidence defensive penalties.
+Strong attacks and chase objectives are exempt from that major-error rule.
+Value compares near-equal speed/safety alternatives. Final-hand protect and
+riichi chase/protect evidence contributes to placement, conservatively.
+
+Legal riichi and dama on the same tile remain separate actions, respecting
+closure, >=1000 points and at least four live-wall tiles. Policy riichi margins
+remain diagnostic only: disagreeing costs at most 25 quality points with weight
+1 and never establishes a major error by itself. Clear structural regressions,
+dead waits with a live alternative, and unnecessary danger can be major errors
+with weight 2. These weights express heuristic rule strength, not statistical
+confidence. Weighted danger is not a calibrated deal-in probability. The playing
+AI remains unchanged. Agreement compares action type, tile kind and red status,
+not interchangeable physical copies, and does not determine quality.
+Chi, pon, daiminkan and passing are compared within the same claim window.
+Passing is the zero baseline; calls reuse the playing policy's route, guaranteed
+yaku, shanten, value, dealer and public-threat analysis, with full post-call
+discard analysis and kuikae restrictions. Passing a call without a concrete
+speed/yaku benefit provides no positive evidence. Calling without guaranteed
+yaku alone is not a major error; open routes may still develop. A call that
+regresses shanten without compensating value at low pressure can be major.
+Kan policy scores remain diagnostics; speculative rinshan/dora outcomes supply
+no positive skill evidence. Questionable kan commitments receive only weight-1
+loss capped at 25, never major; declining a preferred kan is not penalized.
+Self-kan scores no longer force a positive margin merely because the playing
+policy prefers kan. A forced riichi discard with no kan alternative is excluded.
+Agreement normalizes a call's consumed tile kinds/red status, so interchangeable
+physical copies and different equivalent option indices agree.
+Automatic actions, cancelled claim responses, ron decisions and non-choice
+forced actions are not rated. Missing analysis is recorded separately rather
+than as a failed decision. The review facade is `evaluate-decision.js`.
+`review-statistics.js` stores evidence per ability and public hand identity in
+the career record. Within a hand, each ability's statistical weight is capped at
+6 and effective sample weight at 12 (two weight units equal one effective sample).
+Later decisions still update the hand's means after the caps are reached.
+The four abilities each contribute one quarter of quality; unobserved abilities
+stay neutral at 80, and observed scores shrink toward 80 until 12 weight units.
+Major-error gating uses the highest observed ability-specific rate so easy
+attacks cannot dilute defensive errors. Uninformative choices supply no sample,
+perfect-score credit or major-error denominator. Legacy counters remain readable
+and are preserved when an in-progress match begins receiving new evidence.
+Completed placements are never recalculated. These are provisional heuristic
+skill diagnostics, not calibrated expected-point losses, probabilities or Elo.
 
 Final settlement and the resumable match are written together, deduplicated by
 match ID. Starting the next match allocates a fresh seed and ID. Restoring a

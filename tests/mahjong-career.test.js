@@ -3,7 +3,7 @@ import test from "node:test";
 import { CAREER_KEYS, CAREER_TIERS, createCareer, parseCareer, settleCareer, placementTier, careerSummary, hasPendingPlacementResult, leagueThresholds } from "../src/game/career/career.js";
 import { createCareerStore } from "../src/storage/career-store.js";
 import { createMahjongSoloSave } from "../src/game/replay/solo-save.js";
-import { evaluateCareerDiscard } from "../src/game/career/evaluate-discard.js";
+import { evaluateCareerDecision } from "../src/game/career/evaluate-decision.js";
 
 const save = (id) => createMahjongSoloSave({ randomSeed: "0123456789abcdef0123456789abcdef", matchId: id, matchType: "hanchan", rules: {} });
 function completed(career, id, scores = [40000, 20000, 20000, 20000]) {
@@ -286,33 +286,46 @@ test("bad saves are rejected without replacing their contents", () => {
   assert.equal(parseCareer(null), null);
 });
 
-test("career discard review distinguishes near-equivalence, large loss, red fives and forced turns", () => {
+test("career discard review uses concrete evidence, preserves equivalent copies and skips forced turns", () => {
   const state = { phase: "playing", turnIndex: 1, players: ["mahjong-player"], hands: { "mahjong-player": [18, 19, 17, 2] }, drawnTile: 3, riichi: {} };
   let scoreLoss = 10;
   const game = { checkpoint: () => ({ state }), aiAction: () => assert.fail("review must reuse its own recommendation"),
-    aiActionReview: () => ({ mode: "push", scoreLoss, bestAction: { type: "discard", tileId: 18 } }) };
-  const close = evaluateCareerDiscard(game, { type: "discard", tileId: 2 }, "mahjong-player");
+    aiActionReview: (_state, _actor, action) => state.riichi["mahjong-player"] ? null : ({ mode: "push", scoreLoss,
+      decisionCount: 3, bestAction: { type: "discard", tileId: 18 },
+      context: { hand: "1:1:0:1", pressure: 0, objective: "normal" }, evidenceCandidates: [
+        { action, selected: true, shanten: scoreLoss >= 314 ? 2 : 0, ukeire: 8, value: 2, shape: 3, risk: 0 },
+        { action: { type: "discard", tileId: 18 }, shanten: 0, ukeire: 8, value: 2, shape: 3, risk: 0 },
+      ] }) };
+  const close = evaluateCareerDecision(game, { type: "discard", tileId: 2 }, "mahjong-player");
   assert.equal(close.agreed, false);
-  assert.equal(close.review.quality, 100);
-  assert.equal(evaluateCareerDiscard(game, { type: "discard", tileId: 19 }, "mahjong-player").agreed, true);
-  assert.equal(evaluateCareerDiscard(game, { type: "discard", tileId: 17 }, "mahjong-player").agreed, false);
+  assert.equal(close.review.quality, 80, "unrevealing choices stay neutral instead of adding perfect samples");
+  assert.deepEqual(close.review.evidence.dimensions, {});
+  assert.equal(evaluateCareerDecision(game, { type: "discard", tileId: 19 }, "mahjong-player").agreed, true);
+  assert.equal(evaluateCareerDecision(game, { type: "discard", tileId: 17 }, "mahjong-player").agreed, false);
   scoreLoss = 314;
-  assert.equal(evaluateCareerDiscard(game, { type: "discard", tileId: 2 }, "mahjong-player").review.quality, 0);
+  assert.equal(evaluateCareerDecision(game, { type: "discard", tileId: 2 }, "mahjong-player").review.quality, 0);
   state.riichi["mahjong-player"] = true;
-  assert.equal(evaluateCareerDiscard(game, { type: "discard", tileId: 2 }, "mahjong-player"), null);
-  assert.equal(evaluateCareerDiscard(game, { type: "pass" }, "mahjong-player"), null);
+  assert.equal(evaluateCareerDecision(game, { type: "discard", tileId: 2 }, "mahjong-player"), null);
+  assert.equal(evaluateCareerDecision(game, { type: "pass" }, "mahjong-player"), null);
 });
 
 test("decision review includes the riichi choice even when the discarded tile matches", () => {
   const state = { phase: "playing", turnIndex: 1, players: ["human"], hands: { human: [1] }, drawnTile: 2, riichi: {} };
   const game = { checkpoint: () => ({ state }), aiActionReview: () => ({
     bestAction: { type: "riichi", tileId: 1 }, riichiAvailable: true, mode: "push", scoreLoss: 152,
+    decisionCount: 2, riichiReason: "live_wait", riichiPreference: 152,
+    context: { hand: "1:1:0:1", pressure: 0, objective: "normal" }, evidenceCandidates: [
+      { action: { type: "discard", tileId: 1 }, tileKey: "1:plain", selected: true, score: 0,
+        shanten: 0, ukeire: 8, value: 2, shape: 3, risk: 0 },
+      { action: { type: "riichi", tileId: 1 }, tileKey: "1:plain", score: 152,
+        shanten: 0, ukeire: 8, value: 2, shape: 3, risk: 0 },
+    ],
   }) };
-  const result = evaluateCareerDiscard(game, { type: "discard", tileId: 1 }, "human");
+  const result = evaluateCareerDecision(game, { type: "discard", tileId: 1 }, "human");
   assert.equal(result.eligible, true, "one tile kind can still offer two distinct decisions");
   assert.equal(result.agreed, false);
-  assert.equal(result.review.quality, 54);
-  assert.equal(result.review.major, true);
+  assert.equal(result.review.quality, 75);
+  assert.equal(result.review.major, false, "a heuristic riichi margin alone cannot establish a major error");
 });
 
 test("only the three placement matches enable career evaluation, including resumed slots", () => {

@@ -399,8 +399,21 @@ end
 
 function __playweft_local_career_snapshot(actor_id)
   local state = __local_state
-  if state.phase ~= "playing" or state.players[state.turnIndex] ~= actor_id
-    or state.riichi[actor_id] then return nil end
+  local claimant
+  if state.phase == "claiming" then
+    local _
+    _, claimant = pending_claimant_for_player(state, actor_id)
+    if not claimant then return nil end
+    local has_call = false
+    for _, option in ipairs(claimant.options) do
+      if option.kind ~= "ron" then has_call = true end
+    end
+    if not has_call then return nil end
+  elseif state.phase ~= "playing" or state.players[state.turnIndex] ~= actor_id then
+    return nil
+  elseif state.riichi[actor_id] and #self_kan_options(state, actor_id) == 0 then
+    return nil
+  end
   local snapshot = {
     phase = state.phase, players = copy_array(state.players),
     hands = { [actor_id] = copy_array(state.hands[actor_id]) },
@@ -411,11 +424,16 @@ function __playweft_local_career_snapshot(actor_id)
     kuikaeForbidden = { [actor_id] = copy_record_value(state.kuikaeForbidden and state.kuikaeForbidden[actor_id] or {}) },
     rules = copy_record_value(state.rules),
     matchType = state.matchType, roundWind = state.roundWind, handNumber = state.handNumber,
-    dealerIndex = state.dealerIndex, turnIndex = state.turnIndex, drawnTile = state.drawnTile,
+    dealerIndex = state.dealerIndex, turnIndex = state.turnIndex, drawnTile = claimant and 0 or state.drawnTile,
     kanCount = state.kanCount, honba = state.honba, riichiSticks = state.riichiSticks,
     callOccurred = state.callOccurred, rinshanWin = state.rinshanWin, chankanWin = state.chankanWin,
     moveCount = state.moveCount, wall = {}, deadWall = {},
   }
+  if claimant then
+    snapshot.lastDiscard = copy_record_value(state.lastDiscard)
+    snapshot.claimants = { copy_record_value(claimant) }
+    snapshot.claimResponses, snapshot.claimIndex = {}, 1
+  end
   -- Policy code uses only the live wall's length and exposed indicators.
   -- Never send future draws, ura indicators, opponents' hands or paipu logs.
   for index = 1, #state.wall do snapshot.wall[index] = 0 end

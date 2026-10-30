@@ -1,4 +1,5 @@
 import { getGameStorage } from "./game-storage-cache.js";
+import { accumulateReview } from "../game/career/review-statistics.js";
 import {
   CAREER_KEYS, CAREER_AI_VERSION, createCareer, parseCareer,
   hasPendingPlacementResult, hasPendingLeagueResult, settleCareer,
@@ -54,9 +55,7 @@ export function createCareerStore(storage = getGameStorage("mahjong")) {
         career.analysis.eligible += 1;
         career.analysis.agreed += evaluation.agreed ? 1 : 0;
         if (evaluation.review) {
-          career.analysis.reviewed += 1;
-          career.analysis.qualityTotal += evaluation.review.quality;
-          career.analysis.majorMistakes += evaluation.review.major ? 1 : 0;
+          accumulateReview(career.analysis, evaluation.review);
         }
       } else if (evaluation?.unavailable) career.analysis.unavailable += 1;
       career = settleCareer(career, state);

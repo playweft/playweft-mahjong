@@ -1,5 +1,6 @@
 import { HUMAN_ID } from "../rules/constants.js";
 import { normalizeMahjongSoloSave } from "../replay/solo-save.js";
+import { summarizeReviews, validReviewEvidence } from "./review-statistics.js";
 
 export const CAREER_KEYS = [1, 2, 3].map((slot) => `playweft.mahjong.career.slot-${slot}.v1`);
 export const CAREER_TIERS = ["E1", "D3", "D2", "D1", "C3", "C2", "C1", "B2", "B1", "A2", "A1"];
@@ -39,7 +40,9 @@ const validAnalysis = (value) => value && value.version === CAREER_AI_VERSION &&
   [value.eligible, value.agreed, value.unavailable].every((n) => Number.isSafeInteger(n) && n >= 0) &&
   [value.reviewed, value.qualityTotal, value.majorMistakes].every((n) => Number.isSafeInteger(n) && n >= 0) &&
   value.reviewed <= value.eligible && value.qualityTotal <= value.reviewed * 100 && value.majorMistakes <= value.reviewed &&
-  value.agreed <= value.eligible && (value.matchId === null || typeof value.matchId === "string");
+  value.agreed <= value.eligible && (value.matchId === null || typeof value.matchId === "string") &&
+  validReviewEvidence(value.evidence) && (!value.evidence || (value.evidence.legacy.reviewed <= value.reviewed &&
+    value.evidence.legacy.qualityTotal <= value.qualityTotal && value.evidence.legacy.majorMistakes <= value.majorMistakes));
 const validResult = (value) => value && typeof value.matchId === "string" &&
   Number.isFinite(value.points) && Number.isFinite(value.score) &&
   Number.isInteger(value.rank) && value.rank >= 1 && value.rank <= 4 && validAnalysis(value.analysis);
@@ -85,21 +88,23 @@ export function parseCareer(raw) {
 export function placementTier(results) {
   const points = round(results.reduce((total, result) => total + result.points, 0));
   if (points >= PLACEMENT_C2_POINTS) return "C2";
-  const reviewed = results.reduce((total, result) => total + result.analysis.reviewed, 0);
-  const quality = results.reduce((total, result) => total + result.analysis.qualityTotal, 0);
-  const major = results.reduce((total, result) => total + result.analysis.majorMistakes, 0);
-  // A second C2 route rewards reviewed choices, including near-equivalent
-  // alternatives. Exact agreement alone is not a quality estimate.
+  const { reviewed, quality, majorRate } = summarizeReviews(results.map((result) => result.analysis));
+  // New evidence balances four abilities and caps related observations per
+  // hand. Legacy records retain their pooled quality; exact agreement is not
+  // a skill measure. The worst observed ability controls the major-error gate.
   if (points >= 90 && reviewed >= PLACEMENT_MIN_REVIEWS &&
-      quality > 80 * reviewed && major * 10 <= reviewed) return "C2";
+      quality > 80 + 1e-9 && majorRate <= 0.1 + 1e-12) return "C2";
   // Internal placement-only correction:
   // clamp(2 * (meanQuality - 80), -40, 40) * min(1, reviewed / 60).
-  // Keep the pooled sums intact to avoid rounding a small sample's average.
+  // Keep fractional evidence intact rather than rounding a small sample.
   // Zero reviews naturally contribute zero; mistakes already reduce quality.
-  const qualityOffset = quality - 80 * reviewed;
+  const qualityOffset = (quality - 80) * reviewed;
   const boundedOffset = Math.max(-20 * reviewed, Math.min(20 * reviewed, qualityOffset));
   const adjustedPoints = points + 2 * boundedOffset / Math.max(60, reviewed);
-  return adjustedPoints >= 90 ? "C3" : adjustedPoints >= 30 ? "D1" : adjustedPoints >= -30 ? "D2" : adjustedPoints >= -90 ? "D3" : "E1";
+  // Capped per-hand weights introduce fractions; preserve inclusive grade
+  // boundaries despite machine-precision summation differences.
+  const reaches = (threshold) => adjustedPoints >= threshold - 1e-9;
+  return reaches(90) ? "C3" : reaches(30) ? "D1" : reaches(-30) ? "D2" : reaches(-90) ? "D3" : "E1";
 }
 
 // Old saves can reveal their initial grade once, unless league play has already begun.

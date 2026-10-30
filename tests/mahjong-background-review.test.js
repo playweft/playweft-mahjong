@@ -5,7 +5,7 @@ import { createMahjongSoloSaveController } from "../src/app/solo-save-controller
 import { createCareerStore } from "../src/storage/career-store.js";
 import { createMahjongSoloSave } from "../src/game/replay/solo-save.js";
 import { createLocalLuaGame } from "../src/runtime/local-lua-game.js";
-import { evaluateCareerDiscard } from "../src/game/career/evaluate-discard.js";
+import { evaluateCareerDecision } from "../src/game/career/evaluate-decision.js";
 
 const human = "mahjong-player";
 const save = (id) => createMahjongSoloSave({ randomSeed: "0123456789abcdef0123456789abcdef", matchId: id, matchType: "hanchan", rules: {} });
@@ -110,10 +110,10 @@ test("a delayed policy review uses the pre-discard snapshot after the authoritat
   try {
     const snapshot = game.checkpoint().state;
     const action = game.aiAction(snapshot, human).action;
-    const expected = evaluateCareerDiscard(game, action, human, snapshot);
+    const expected = evaluateCareerDecision(game, action, human, snapshot);
     assert.equal(game.action(action, human).accepted, true);
     const after = game.checkpoint();
-    assert.deepEqual(evaluateCareerDiscard(game, action, human, snapshot), expected);
+    assert.deepEqual(evaluateCareerDecision(game, action, human, snapshot), expected);
     assert.deepEqual(game.checkpoint(), after, "review cannot change the authoritative game");
   } finally { game.close(); }
 });
@@ -161,6 +161,30 @@ test("the actual rules worker acknowledges a career discard without invoking pol
   assert.ok(snapshot.wall.every((tile) => tile === 0));
   assert.ok(outcome.projection.state.moveCount > before.state.moveCount);
   const after = await request("checkpoint");
-  assert.deepEqual(await request("reviewCareerDiscard", { state: snapshot, action, actorId: human }), { unavailable: true });
+  assert.deepEqual(await request("reviewCareerDecision", { state: snapshot, action, actorId: human }), { unavailable: true });
   assert.deepEqual(await request("checkpoint"), after);
+  const callState = structuredClone(before.state);
+  callState.phase = "claiming";
+  callState.turnIndex = 2;
+  callState.drawnTile = 0;
+  callState.hands[human] = [125,126,5,9,13,21,25,29,41,45,97,98,117];
+  callState.lastDiscard = { player: "a", playerIndex: 2, tile: 128, discardIndex: 1 };
+  callState.discards.a = [{ tile: 128, claimed: false }];
+  callState.claimants = [{ playerId: human, playerIndex: 1, distance: 3,
+    options: [{ kind: "pon", tileIds: [125,126] }] }];
+  callState.claimResponses = [];
+  callState.claimIndex = 1;
+  await request("restoreCheckpoint", { checkpoint: { state: callState, events: [], stateVersion: 20 }, viewerId: human });
+  const pass = await request("claimResponse", { action: { type: "pass" }, actorId: human,
+    expectedVersion: 20, viewerId: human, actionOptions: { evaluateCareer: true } });
+  assert.equal(pass.result.accepted, true);
+  assert.equal(pass.careerAnalysis, null);
+  assert.equal(pass.careerReviewState.phase, "claiming");
+  assert.deepEqual(pass.careerReviewState.claimants.map((entry) => entry.playerId), [human]);
+  assert.equal(pass.projection.state.phase, "playing");
+  const skipped = await request("claimResponse", { action: { type: "claim", option: 1 }, actorId: human,
+    expectedVersion: 21, viewerId: human, actionOptions: { evaluateCareer: true } });
+  assert.equal(skipped.result.skipped, true);
+  assert.equal(skipped.careerReviewState, undefined);
+  assert.equal(skipped.projection.state.phase, "playing", "a skipped response still returns the latest projection");
 });

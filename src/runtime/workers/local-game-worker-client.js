@@ -130,6 +130,20 @@ export async function createLocalLuaGame(options = {}) {
       },
       viewerId: options.playerId,
     }, { timeoutMs: Number(options.initializationTimeoutMs) || 0 });
+    const reviewedResponse = (response, action, actorId, viewerId) => {
+      const { careerReviewState, ...outcome } = response;
+      if (outcome.result?.accepted && careerReviewState) {
+        careerReviewer ??= createLocalLuaGame({
+          ...options, sourceUrl, buildVersion, resourcePolicy, resourceMode,
+          initializationTimeoutMs: 10000,
+        });
+        outcome.careerAnalysis = careerReviewer.then((reviewer) => {
+          if (closed) return { unavailable: true };
+          return reviewer.reviewCareerDecision(careerReviewState, action, actorId);
+        }).catch(() => ({ unavailable: true }));
+      }
+      return projectResponse(outcome, viewerId);
+    };
     return {
       matchId: initialized.matchId,
       playerId: options.playerId,
@@ -167,25 +181,11 @@ export async function createLocalLuaGame(options = {}) {
         }).then((response) => projectResponse(response, viewerId));
       },
       action(action, actorId = options.playerId, viewerId = options.playerId, actionOptions) {
-        return request("action", { action, actorId, viewerId, actionOptions }).then((response) => {
-          const { careerReviewState, ...outcome } = response;
-          if (outcome.result?.accepted && careerReviewState) {
-            // A separate engine keeps policy work out of both the action
-            // response and the authoritative worker's next claim/AI request.
-            careerReviewer ??= createLocalLuaGame({
-              ...options, sourceUrl, buildVersion, resourcePolicy, resourceMode,
-              initializationTimeoutMs: 10000,
-            });
-            outcome.careerAnalysis = careerReviewer.then((reviewer) => {
-              if (closed) return { unavailable: true };
-              return reviewer.reviewCareerDiscard(careerReviewState, action, actorId);
-            }).catch(() => ({ unavailable: true }));
-          }
-          return projectResponse(outcome, viewerId);
-        });
+        return request("action", { action, actorId, viewerId, actionOptions }).then((response) =>
+          reviewedResponse(response, action, actorId, viewerId));
       },
-      reviewCareerDiscard(state, action, actorId) {
-        return request("reviewCareerDiscard", { state, action, actorId }, { timeoutMs: 10000 });
+      reviewCareerDecision(state, action, actorId) {
+        return request("reviewCareerDecision", { state, action, actorId }, { timeoutMs: 10000 });
       },
       aiTurn(viewerId = options.playerId) {
         return request("aiTurn", { viewerId }).then((response) =>
@@ -204,9 +204,9 @@ export async function createLocalLuaGame(options = {}) {
           timeoutMs: Number(options.aiDecisionTimeoutMs) || 10000,
         });
       },
-      claimResponse(action, actorId, expectedVersion, viewerId = options.playerId) {
-        return request("claimResponse", { action, actorId, expectedVersion, viewerId }).then(
-          (response) => projectResponse(response, viewerId),
+      claimResponse(action, actorId, expectedVersion, viewerId = options.playerId, actionOptions) {
+        return request("claimResponse", { action, actorId, expectedVersion, viewerId, actionOptions }).then(
+          (response) => reviewedResponse(response, action, actorId, viewerId),
         );
       },
       aiAction(state, actorId) {

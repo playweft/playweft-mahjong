@@ -9,7 +9,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture({ decisions, deferredPlan, apply } = {}) {
+function fixture({ decisions, deferredPlan, apply, evaluation, persist } = {}) {
   let clock = 0, timerId = 0, landed, planning = 0;
   let state = {
     players: ["human", "ai-1", "ai-2", "ai-3"],
@@ -18,6 +18,7 @@ function fixture({ decisions, deferredPlan, apply } = {}) {
     legalActions: { claims: [{ kind: "chi", option: 1 }] },
   };
   const calls = [], timers = new Map(), errors = [];
+  const reviewOptions = [], savedEvaluations = [];
   let version = 8;
   const game = {
     async aiClaimDecisions() {
@@ -28,12 +29,14 @@ function fixture({ decisions, deferredPlan, apply } = {}) {
         human: { distance: 1, options: [{ option: 1, priority: 2 }] },
       };
     },
-    async claimResponse(action, actorId, expectedVersion) {
+    async claimResponse(action, actorId, expectedVersion, viewerId, actionOptions) {
+      reviewOptions.push([actorId, actionOptions]);
       assert.equal(expectedVersion, version);
       calls.push([actorId, action, clock]);
       const skipped = apply?.(action, actorId) === "skip";
       if (!skipped) version++;
-      return { result: { accepted: !skipped, skipped, version }, projection: { state, events: [] } };
+      return { result: { accepted: !skipped, skipped, version }, projection: { state, events: [] },
+        careerAnalysis: !skipped && actorId === "human" ? evaluation : undefined };
     },
   };
   const controller = createMahjongSoloClaimController({
@@ -42,12 +45,15 @@ function fixture({ decisions, deferredPlan, apply } = {}) {
     random: () => 1 / 3,
     setTimer(callback, delay) { const id = ++timerId; timers.set(id, { callback, at: clock + delay }); return id; },
     clearTimer: (id) => timers.delete(id),
-    persistAcceptedAction: (action, actor) => calls.push(["save", actor, action]),
+    persistAcceptedAction: async (action, actor, projection, game, evaluation) => {
+      calls.push(["save", actor, action]); savedEvaluations.push(evaluation);
+      await persist?.(evaluation);
+    },
     refreshProjection: () => calls.push(["render", clock]),
     onError: (error) => errors.push(error),
   });
   return {
-    controller, calls, errors, game, timers,
+    controller, calls, errors, game, timers, reviewOptions, savedEvaluations,
     planning: () => planning,
     setState: (next) => { state = next; },
     state: () => state,
@@ -79,6 +85,52 @@ test("claim thinking starts before landing without locking the human; AI declare
   await f.advance(540);
   assert.deepEqual(f.calls.find(([who]) => who === "ai-2"), ["ai-2", ron.action, 540]);
   assert.deepEqual(f.errors, []);
+  f.controller.cancel();
+});
+
+test("manual claim review options and its pending evaluation reach persistence without delaying the response", async () => {
+  const review = deferred();
+  const f = fixture({ evaluation: review.promise });
+  f.controller.ensure();
+  await settle();
+  assert.equal(await f.controller.respond({ type: "claim", option: 1 }, { evaluateCareer: true }), true);
+  assert.deepEqual(f.reviewOptions, [["human", { evaluateCareer: true }]]);
+  assert.deepEqual(f.savedEvaluations, [review.promise]);
+  assert.equal(f.calls.some(([action]) => action === "render"), true);
+  f.controller.cancel();
+  review.resolve(null);
+});
+
+test("automatic passes do not request reviews and cancelled calls never persist one", async () => {
+  const f = fixture();
+  f.controller.ensure();
+  await settle();
+  await f.controller.respond({ type: "pass" }, { evaluateCareer: false });
+  assert.deepEqual(f.reviewOptions, [["human", { evaluateCareer: false }]]);
+  f.controller.cancel();
+  const skipped = fixture({ decisions: [ron], evaluation: Promise.resolve({ eligible: true }),
+    apply: (_action, actor) => actor === "human" ? "skip" : undefined });
+  skipped.controller.ensure();
+  const response = skipped.controller.respond({ type: "claim", option: 1 }, { evaluateCareer: true });
+  await settle(); skipped.land(); await skipped.advance(300);
+  await response;
+  assert.deepEqual(skipped.savedEvaluations, [undefined], "only the AI's accepted ron was persisted");
+  skipped.controller.cancel();
+});
+
+test("a match-ending pass displays the result before settlement waits for its review", async () => {
+  const review = deferred();
+  let f;
+  f = fixture({ evaluation: review.promise, persist: (evaluation) => evaluation,
+    apply: () => f.setState({ ...f.state(), phase: "hand_ended", matchEnded: true }) });
+  f.controller.ensure();
+  await settle();
+  const response = f.controller.respond({ type: "pass" }, { evaluateCareer: true });
+  await settle();
+  assert.equal(f.calls.some(([action]) => action === "render"), true);
+  review.resolve(null);
+  assert.equal(await response, true);
+  assert.equal(f.calls.filter(([action]) => action === "render").length, 1);
   f.controller.cancel();
 });
 

@@ -1,6 +1,6 @@
 import { createLocalLuaGame } from "../local-lua-game.js";
 
-import { evaluateCareerDiscard } from "../../game/career/evaluate-discard.js";
+import { evaluateCareerDecision } from "../../game/career/evaluate-decision.js";
 
 let game;
 
@@ -48,25 +48,27 @@ async function handle(type, payload) {
     };
   }
   if (type === "replayActions") return replayActions(payload);
-  if (type === "reviewCareerDiscard") {
-    return evaluateCareerDiscard(game, payload.action, payload.actorId, payload.state);
+  if (type === "reviewCareerDecision") {
+    return evaluateCareerDecision(game, payload.action, payload.actorId, payload.state);
   }
-  if (type === "action") {
+  if (type === "action" || type === "claimResponse") {
     let careerReviewState;
     let careerAnalysis = null;
-    if (payload.actionOptions?.evaluateCareer && ["discard", "riichi"].includes(payload.action?.type)) {
+    if (payload.actionOptions?.evaluateCareer && ["discard", "riichi", "kan", "claim", "pass"].includes(payload.action?.type)) {
       try {
         careerReviewState = game.careerReviewSnapshot(payload.actorId);
       } catch {
         careerAnalysis = { unavailable: true };
       }
     }
-    const result = game.action(payload.action, payload.actorId);
+    const result = type === "claimResponse"
+      ? game.claimResponse(payload.action, payload.actorId, payload.expectedVersion)
+      : game.action(payload.action, payload.actorId);
     return {
       result,
       careerAnalysis: result?.accepted ? careerAnalysis : null,
       careerReviewState: result?.accepted ? careerReviewState : undefined,
-      projection: result?.accepted ? game.view(payload.viewerId) : null,
+      projection: result?.accepted || type === "claimResponse" ? game.view(payload.viewerId) : null,
     };
   }
   if (type === "aiTurn") {
@@ -76,10 +78,6 @@ async function handle(type, payload) {
     return game.aiDecision(payload.viewerId);
   }
   if (type === "aiClaimDecisions") return game.aiClaimDecisions(payload.viewerId);
-  if (type === "claimResponse") {
-    const result = game.claimResponse(payload.action, payload.actorId, payload.expectedVersion);
-    return { result, projection: game.view(payload.viewerId) };
-  }
   if (type === "aiAction") {
     return game.aiAction(payload.state, payload.actorId);
   }

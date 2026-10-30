@@ -5073,7 +5073,7 @@ local function copy_meld_list(melds)
 	return result
 end
 
-local function simulated_claim(state, claimant, option)
+local function simulated_claim(state, claimant, option, full_analysis)
 	local hand = copy_array(state.hands[claimant.playerId])
 	for _, tile in ipairs(option.tileIds or {}) do
 		remove_tile(hand, tile)
@@ -5099,11 +5099,11 @@ local function simulated_claim(state, claimant, option)
 				danger = 0,
 			}
 	end
-	local _, discard = choose_ai_discard(state, claimant.playerIndex, hand, nil, kuikae_forbidden_types(option), melds)
+	local _, discard = choose_ai_discard(state, claimant.playerIndex, hand, nil, kuikae_forbidden_types(option), melds, full_analysis)
 	return hand, melds, discard
 end
 
-local function choose_ai_claim(state, claimant, ron_only)
+local function choose_ai_claim(state, claimant, ron_only, review_action)
 	for index, option in ipairs(claimant.options) do
 		if option.kind == "ron" then
 			return { type = "claim", option = index }
@@ -5116,9 +5116,10 @@ local function choose_ai_claim(state, claimant, ron_only)
 	local current_goal = ai_hand_goal(state, seat, current_hand, current_melds)
 	local pressure = ai_threat_pressure(state, seat)
 	local best
+	local reviewed = review_action and { { action = { type = "pass" }, score = 0 } } or nil
 	for index, option in ipairs(claimant.options) do
 		if option.kind ~= "ron" then
-			local hand, melds, discard = simulated_claim(state, claimant, option)
+			local hand, melds, discard = simulated_claim(state, claimant, option, reviewed ~= nil)
 			if discard then
 				local improvement = current_shanten - discard.shanten
 				local goal = ai_hand_goal(state, seat, discard.hand or hand, melds)
@@ -5211,10 +5212,60 @@ local function choose_ai_claim(state, claimant, ron_only)
 				if acceptable and (not best or score > best.score) then
 					best = { index = index, score = score }
 				end
+				if reviewed then
+					-- Compare against passing (zero) using public route/speed/risk.
+					-- Review daiminkan as a commitment with a volatility cost, rather
+					-- than copying the playing AI's blanket daiminkan exclusion.
+					local review_acceptable = acceptable or (option.kind == "kan"
+						and (has_yaku or locked_tanyao) and discard.shanten <= 2
+						and improvement >= 0 and pressure < 0.75)
+					local call_score
+					if review_acceptable then
+						call_score = math.max(1, score - (option.kind == "kan" and 45 + pressure * 60 or 0))
+					else
+						call_score = -(24 + (not (has_yaku or locked_tanyao) and 100 or 0)
+							+ math.max(0, -improvement) * 150
+							+ (current_goal.preserveClosed and 44 or 0)
+							+ (improvement <= 0 and 40 or 0)
+							+ math.max(0, pressure - 0.7) * 90)
+					end
+					reviewed[#reviewed + 1] = { action = { type = "claim", option = index }, score = call_score,
+						shanten = discard.shanten, ukeire = discard.ukeire or 0, value = value,
+						yaku = has_yaku or locked_tanyao, uncertain = option.kind == "kan" }
+				end
 			end
 		end
 	end
-	return best and { type = "claim", option = best.index } or { type = "pass" }
+	return best and { type = "claim", option = best.index } or { type = "pass" }, reviewed
+end
+
+function ai_claim_review(state, actor_id, action)
+	if state.phase ~= "claiming" or (action.type ~= "claim" and action.type ~= "pass") then return nil end
+	local _, claimant = pending_claimant_for_player(state, actor_id)
+	if not claimant then return nil end
+	for _, option in ipairs(claimant.options) do
+		if option.kind == "ron" then return nil end
+	end
+	local _, candidates = choose_ai_claim(state, claimant, false, action)
+	if not candidates or #candidates <= 1 then return nil end
+	local best, chosen = candidates[1], nil
+	for _, candidate in ipairs(candidates) do
+		if candidate.score > best.score then best = candidate end
+		if candidate.action.type == action.type and (action.type == "pass" or candidate.action.option == action.option) then chosen = candidate end
+	end
+	if not chosen then return nil end
+	local context = career_review_context(state, claimant.playerIndex)
+	context.claiming = true
+	context.shanten = hand_shanten(state.hands[actor_id], state.melds[actor_id], {})
+	local goal = ai_hand_goal(state, claimant.playerIndex, state.hands[actor_id], state.melds[actor_id])
+	context.preserveClosed, context.value = goal.preserveClosed == true, goal.closedValue
+	chosen.selected = true
+	return {
+		bestAction = best.action, bestScore = best.score, chosenScore = chosen.score,
+		scoreLoss = math.max(0, best.score - chosen.score), mode = "call",
+		candidateCount = #candidates, decisionCount = #candidates,
+		context = context, evidenceCandidates = candidates,
+	}
 end
 
 -- All requested actors evaluate the same discard snapshot. The per-actor
@@ -5362,22 +5413,53 @@ end
 
 -- Compare discards under the same push/fold mode and candidate scoring. These
 -- scores are policy heuristics, not calibrated point loss or human ratings.
+function career_review_context(state, seat, profile)
+  local confirmed, threats, safe_types = false, {}, {}
+  for other, id in ipairs(state.players) do
+    if other ~= seat and state.riichi[id] then confirmed = true end
+    if other ~= seat and (state.riichi[id] or opponent_threat_strength(state, id) >= 0.55) then
+      threats[#threats + 1] = opponent_discarded_types(state, id)
+    end
+  end
+  for kind = 1, 34 do
+    local safe = #threats > 0
+    for _, discarded in ipairs(threats) do if not discarded[kind] then safe = false end end
+    safe_types[kind] = safe
+  end
+  return { pressure = profile and profile.pressure or ai_threat_pressure(state, seat),
+    objective = profile and profile.objective or endgame_objective(state, seat).mode,
+    confirmedThreat = confirmed, safeTypes = safe_types,
+    hand = tostring(state.roundWind) .. ":" .. tostring(state.handNumber) .. ":" .. tostring(state.honba) .. ":" .. tostring(state.dealerIndex) }
+end
+
+function career_review_candidate(candidate, action, score, context)
+  return { action = action, score = score, shanten = candidate.shanten, ukeire = candidate.ukeire,
+    value = candidate.value, risk = candidate.dealinRisk, shape = candidate.shapeValue,
+    reserve = candidate.futureSafeReserve, special = candidate.special, waitQuality = candidate.waitQuality or 0,
+    safe = context.safeTypes[tile_type(candidate.tile)], tileKey = tostring(tile_type(candidate.tile)) .. (RED_FIVES[candidate.tile] and ":red" or ":plain") }
+end
+
 function ai_action_review(state, actor_id, action)
+  if state.phase == "claiming" then return ai_claim_review(state, actor_id, action) end
   local seat = player_index(state, actor_id)
   if not seat or state.phase ~= "playing" or state.turnIndex ~= seat
-    or state.riichi[actor_id] or (action.type ~= "discard" and action.type ~= "riichi") then return nil end
+    or (action.type ~= "discard" and action.type ~= "riichi" and action.type ~= "kan") then return nil end
   if state.drawnTile > 0 and score_hand(state, seat, state.drawnTile, "tsumo") then return nil end
   if can_abort_nine(state, actor_id) and should_abort_nine_tiles(state, actor_id) then return nil end
   local hand = hand_with_drawn(state, actor_id)
   local forbidden = state.kuikaeForbidden and state.kuikaeForbidden[actor_id]
   -- Compute every minimum-shanten candidate to the same depth exactly once.
   -- No candidate gets extra precision merely because the player selected it.
-  local _, profile, candidates = choose_ai_discard(state, seat, hand, nil, forbidden, nil, true)
+  local allowed = state.riichi[actor_id] and { state.drawnTile } or nil
+  local _, profile, candidates = choose_ai_discard(state, seat, hand, allowed, forbidden, nil, true)
   if not profile then return nil end
-  if choose_ai_self_kan(state, seat, self_kan_options(state, actor_id), profile) then return nil end
-  local can_riichi = is_closed_hand(state.melds[actor_id]) and state.scores[seat] >= 1000 and #state.wall >= 4
+  local kans = self_kan_options(state, actor_id)
+  local can_riichi = not state.riichi[actor_id] and is_closed_hand(state.melds[actor_id]) and state.scores[seat] >= 1000 and #state.wall >= 4
   local riichi_scale = profile.mode == "fold" and 1050 / 300 or profile.mode == "mixed" and 400 / 300 or 1
   local best, chosen, best_action, best_score, chosen_score, decision_count = nil, nil, nil, -math.huge, nil, 0
+  local evidence_candidates = {}
+  local context = career_review_context(state, seat, profile)
+  context.modeScale, context.shanten = riichi_scale, profile.shanten
   for _, candidate in ipairs(candidates) do
     local delta, reason = nil, nil
     if can_riichi and candidate.shanten == 0 then
@@ -5392,17 +5474,52 @@ function ai_action_review(state, actor_id, action)
     for _, action_type in ipairs({ "discard", "riichi" }) do
       if action_type == "discard" or delta then
         local score = candidate.score + (action_type == "riichi" and delta or 0)
+        local evidence = career_review_candidate(candidate, { type = action_type, tileId = candidate.tile }, score, context)
+        evidence_candidates[#evidence_candidates + 1] = evidence
         if score > best_score + 0.001
           or (math.abs(score - best_score) <= 0.001 and candidate.tile == profile.tile) then
           best, best_score = candidate, score
           best_action = { type = action_type, tileId = candidate.tile }
         end
-        if tile_type(candidate.tile) == tile_type(action.tileId)
+        if action_type == action.type and tile_type(candidate.tile) == tile_type(action.tileId)
           and (RED_FIVES[candidate.tile] == true) == (RED_FIVES[action.tileId] == true)
-          and action_type == action.type then
+          then
           chosen, chosen_score = candidate, score
+          evidence.selected = true
         end
       end
+    end
+  end
+  local discard_score = best_score
+  for _, option in ipairs(kans) do
+    local remaining, melds = copy_array(hand), copy_record_value(state.melds[actor_id])
+    local tiles = tiles_of_type(remaining, option.tileType, option.kind == "ankan" and 4 or 1)
+    for _, tile in ipairs(tiles) do remove_tile(remaining, tile) end
+    if option.kind == "ankan" then
+      melds[#melds + 1] = { kind = "ankan", tiles = tiles }
+    else
+      local meld = melds[option.meldIndex]
+      meld.kind = "kakan"
+      meld.tiles[#meld.tiles + 1] = tiles[1]
+    end
+    local shanten = hand_shanten(remaining, melds, {})
+    local value = estimated_hand_value(state, seat, remaining, melds, shanten)
+    -- Structural diagnostics only. Never force a positive kan margin merely
+    -- because the playing policy prefers it. Unknown rinshan/dora outcomes
+    -- keep this comparison low-confidence in career evidence.
+    local delta = math.max(-90, math.min(30, (profile.shanten - shanten) * 90
+      + (value - profile.value) * 18 - profile.pressure * 45))
+    local score = discard_score + delta * riichi_scale
+    local kan_action = { type = "kan", kind = option.kind, tileType = option.tileType }
+    local evidence = { action = kan_action, score = score, shanten = shanten, value = value, uncertain = true }
+    evidence_candidates[#evidence_candidates + 1] = evidence
+    decision_count = decision_count + 1
+    if score > best_score then
+      best_score, best_action = score, kan_action
+    end
+    if action.type == "kan" and action.kind == option.kind and action.tileType == option.tileType then
+      chosen, chosen_score = profile, score
+      evidence.selected = true
     end
   end
   if not best or not chosen or decision_count <= 1 then return nil end
@@ -5413,12 +5530,14 @@ function ai_action_review(state, actor_id, action)
     candidateCount = #candidates, decisionCount = decision_count,
     riichiAvailable = can_riichi and chosen.shanten == 0,
     riichiPreference = chosen.riichiDelta or 0, riichiReason = chosen.riichiReason,
-    riichiLoss = math.max(0, chosen_preferred_score - chosen_score),
+    riichiLoss = action.type ~= "kan" and math.max(0, chosen_preferred_score - chosen_score) or 0,
+    kanAvailable = #kans > 0,
     scoreLoss = math.max(0, best_score - chosen_score),
     shantenLoss = math.max(0, chosen.shanten - best.shanten),
     ukeireLoss = chosen.shanten == best.shanten and math.max(0, best.ukeire - chosen.ukeire) or 0,
     riskIncrease = math.max(0, chosen.dealinRisk - best.dealinRisk),
     valueLoss = math.max(0, best.value - chosen.value),
+    context = context, evidenceCandidates = evidence_candidates,
   }
 end
 

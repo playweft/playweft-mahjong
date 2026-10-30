@@ -86,7 +86,7 @@ test("lobby navigation keeps training lengths in the submenu and exposes three c
 
 test("the actual local Lua facade reviews a discard without mutating authoritative state", async (t) => {
   const { createLocalLuaGame } = await import("../src/runtime/local-lua-game.js");
-  const { evaluateCareerDiscard } = await import("../src/game/career/evaluate-discard.js");
+  const { evaluateCareerDecision } = await import("../src/game/career/evaluate-decision.js");
   t.mock.method(globalThis, "fetch", async () => new Response(source));
   const game = await createLocalLuaGame({ sourceUrl: "https://games.example.test/mahjong/game.lua", playerId: "mahjong-player",
     players: [{ id: "mahjong-player" }, { id: "a" }, { id: "b" }, { id: "c" }],
@@ -96,7 +96,7 @@ test("the actual local Lua facade reviews a discard without mutating authoritati
     const actor = checkpoint.state.players[checkpoint.state.turnIndex - 1];
     const action = game.aiAction(checkpoint.state, actor).action;
     assert.ok(["discard", "riichi"].includes(action.type));
-    const review = evaluateCareerDiscard(game, action, actor);
+    const review = evaluateCareerDecision(game, action, actor);
     assert.equal(review.eligible, true);
     assert.equal(review.agreed, true);
     assert.ok(review.review.quality >= 0 && review.review.quality <= 100);

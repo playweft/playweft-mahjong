@@ -69,7 +69,7 @@ test("career discard returns its projection while the independent reviewer is st
   reviewer.respond(reviewer.requests[0], { matchId: "review", projection: {} });
   await f.tick();
   const review = reviewer.requests.at(-1);
-  assert.equal(review.type, "reviewCareerDiscard");
+  assert.equal(review.type, "reviewCareerDecision");
   assert.deepEqual(review.payload, { state: before, action, actorId: "human" });
   const evaluation = { eligible: true, agreed: true, review: { quality: 100, major: false } };
   reviewer.respond(review, evaluation);
@@ -89,6 +89,36 @@ test("ordinary and rejected actions never create a career reviewer", async (t) =
     assert.equal((await pending).careerAnalysis, null);
   }
   assert.equal(f.workers.length, 1);
+});
+
+test("accepted claim responses use the background review path and skipped responses retain their projection", async (t) => {
+  const f = workerFixture(t);
+  const game = await f.start();
+  const action = { type: "claim", option: 2 };
+  const pending = game.claimResponse(action, "human", 8, "human", { evaluateCareer: true });
+  await f.tick();
+  const request = f.workers[0].requests.at(-1);
+  assert.equal(request.payload.actionOptions.evaluateCareer, true);
+  assert.equal(request.payload.expectedVersion, 8);
+  f.workers[0].respond(request, { result: { accepted: true, version: 9 }, careerReviewState: { phase: "claiming" },
+    projection: { state: { phase: "playing" } } });
+  const outcome = await pending;
+  assert.equal(typeof outcome.careerAnalysis.then, "function");
+  await f.tick();
+  const reviewer = f.workers[1];
+  reviewer.respond(reviewer.requests[0], { projection: {} });
+  await f.tick();
+  const review = reviewer.requests.at(-1);
+  assert.deepEqual(review.payload.action, action);
+  reviewer.respond(review, { eligible: true });
+  assert.deepEqual(await outcome.careerAnalysis, { eligible: true });
+  const skipped = game.claimResponse(action, "human", 9, "human", { evaluateCareer: true });
+  await f.tick();
+  f.workers[0].respond(f.workers[0].requests.at(-1), { result: { accepted: false, skipped: true },
+    careerAnalysis: null, projection: { state: { phase: "hand_ended" } } });
+  const result = await skipped;
+  assert.equal(result.careerAnalysis, null);
+  assert.equal(result.projection.state.phase, "hand_ended");
 });
 
 test("closing a game cancels a pending review and records unavailable rather than a bad decision", async (t) => {
